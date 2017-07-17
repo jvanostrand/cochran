@@ -1,0 +1,40 @@
+A yellow Cochran Commander I s/n K019902, dump taken 01 Jun 2017.
+
+This is the only example of this model. It has different config pages and log
+but the sampling is the same as Commander II.
+
+This model doesn't store broken down dates, it seems to store two timestamps,
+one internal (set by mfg) the other seems to have a broken epoch or is set
+incorrectly. Since I don't have Analyst software (or easy access to the DC)
+I can't test changing dates. I used the internal clock since it seems to
+match the user's dive activity closely (off by 6 hours.)
+
+This DC was reset by the mfg. The logs and profile buffer may contain
+old logs. This list is the current, post-reset logs.
+
+  #   Dive Date       Time     BT    Depth Temp Pre Ptr  Pro Ptr  End Ptr
+[  0]    0 2016-07-05 20:35:21  0:39  22.0  73F 00020000 00020244 000214e0
+[  1]    1 2016-07-05 22:06:30  0:35  21.0  74F 00021991 000219a4 00022a70
+[  2]    2 2016-07-12 20:43:53  0:47  18.8  76F 00022f21 00022f6a 00024a35
+[  3]    3 2016-07-12 22:16:49  0:34  18.0  76F 00024ee6 00024ee6 00025f3e
+[  4]    4 2016-07-19 20:51:21  0:52  18.0  76F 000263ef 0002644b 00027e8c
+[  5]    5 2016-07-19 22:18:27  0:35  20.5  76F 0002833d 0002833d 00029533
+[  6]    6 2016-08-23 21:10:25  0:20  18.8  77F 000299e4 00029a66 0002a478
+[  7]    7 2016-08-23 21:43:40  0:43  18.8  77F 0002a929 0002a929 0002c468
+[  8]    8 2016-08-27 14:59:16  0:41  40.8  69F 0002c919 0002c94f 0002dfa8
+[  9]    9 2016-08-27 17:03:20  0:39  34.8  68F 0002e459 0002e459 0002f6a3
+[ 10]   10 2016-08-27 20:45:14  0:04  42.5  69F 0002fb54 0002fb64 0002fda0
+[ 11]   11 2016-08-27 22:06:02  0:42  38.2  68F 00030251 00030261 0003165c
+[ 12]   12 2016-08-28 14:55:45  0:52  51.8  68F 00031b0d 00031b1d 000333e7
+[ 13]   13 2016-08-28 16:24:20  0:35  20.2  69F 00033898 00033898 00034ac8
+[ 14]   14 2016-08-30 21:17:48  0:40  18.0  77F 00034f79 00034fbf 000362df
+[ 15]   15 2016-08-30 22:29:27  0:45  20.5  77F 00036790 00036790 000380a6
+[ 16]   16 2016-09-03 16:24:14  0:35  53.2  69F 00038557 000385b3 000396c3
+[ 17]   17 2016-09-03 18:43:09  0:13  13.5  69F 00039b74 00039b84 0003a1fe
+[ 18]   18 2016-09-03 19:44:46  0:38  69.5  69F 0003a6af 0003a6af 0003b944
+[ 19]   19 2017-05-09 21:54:46  0:36  46.0  50F 0003bdf5 0003c181 0003d2cd
+[ 20]   20 2017-05-09 23:26:33  0:40  93.5  50F 0003d77e 0003d7a4 0003eace
+[ 21]   21 2017-05-18 16:55:10  0:46  65.5  71F 0003ef7f 0003efbe 00040572
+[ 22]   22 2017-05-18 19:31:52  0:29  66.5  70F 00040a23 00040a33 00041811
+[ 23]   23 2017-05-18 20:16:08  0:35  64.0  71F 00041cc2 00041cc2 00042d6a
+

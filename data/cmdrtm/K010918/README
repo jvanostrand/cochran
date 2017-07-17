@@ -1,0 +1,84 @@
+This is an early Commander notable by the Commander TM 
+silk screened on the body. Serial number K010918.
+
+This is the only sample of this model I have. It was purchased
+used at a swap meet and likely had a dead battery for quite
+some time. As a result I think the SRAM memory (which stores
+the dive log and sample data) was lost and filled with random
+bytes.
+
+The first 39 dives were lost due to the long-term battery
+outage and I think the time was lost too. I don't have software to
+set the time so I think the clock started at 0 (Jan 1, 1992). I 
+don't exactly recall when I bought this but it's possible the clock
+reset to 0 seconds shortly thereafter when I replaced the batteries.
+
+This dump contains deco dives, including omitted deco. Unlike
+newer Cochran dive computers this model has a much more conservative
+algorithm and will lock out the user if deco is omitted. This is
+apparent when the log paramter ndl_min (0x35, 2 bytes, LE) is set to
+0xFFFF. 
+
+  #   Dive Date       Time        BT Depth Temp Pro Ptr
+[  0]   32 2085-11-30 13:26:19 738:05 10325.0 206F 903800	<< Corrupt
+[  1] 57215 2059-12-01 14:09:03 409:35 14719.8 239F ffffff	<< Corrupt
+[  2] 32767 1993-03-20 14:06:24  0:49 2053.0   4F 000020	<< Corrupt
+[  3] 41189 2000-07-03 11:01:35 811:11 9815.8 130F 7a63ef	<< Corrupt
+[  4] 32759 1991-06-20 18:02:56 1070:58 16381.8 255F efcefd	<< Corrupt
+[  5] 32896 1992-04-21 04:21:34 497:05 2082.5   8F 008da0	<< Corrupt
+[  6] 61323 2101-06-02 01:59:42 537:34 13743.8 255F ffbfef	<< Corrupt
+[  7] 65535 2093-01-16 11:26:56 273:36 14272.0 255F cd002c	<< Corrupt
+[  8]    0 2006-04-17 15:29:47 37:35 1644.2 163F 298913		<< Corrupt
+[  9] 31741 1974-12-27 04:54:23 1092:15 15871.8 250F 9dffef	<< Corrupt
+[ 10] 49055 1992-01-04 03:11:45 18:29 144.2  16F 180004		<< Corrupt
+[ 11] 60458 2092-04-05 13:18:31 818:13 8383.8  94F affdff	<< Corrupt
+[ 12] 61439 1991-12-31 23:47:16 1088:00 16375.8 247F 7ef76f	<< Corrupt
+[ 13] 5130 2009-07-09 05:31:09 413:09 1302.5   0F 20d848	<< Corrupt
+[ 14]  950 1974-02-11 15:19:27 1091:11 16253.8 186F 7bf97f	<< Corrupt
+[ 15] 65535 2093-10-24 12:03:28  0:00 16324.0 255F ff0242	<< Corrupt
+[ 16] 4640 1995-11-01 19:29:03 639:23 11045.2 136F df1856	<< Corrupt
+[ 17] 53242 2094-01-26 22:37:51 1091:03 15871.2 254F bdffff	<< Corrupt
+[ 18] 61437 2060-01-19 05:31:09  1:21 8832.0   0F 010800	<< Corrupt
+[ 19] 1581 1979-10-09 08:42:38 365:03 9838.2 244F 7b3479	<< Corrupt
+[ 20] 24543 1991-12-07 17:23:28 951:28 16303.8 254F fdebdd	<< Corrupt
+[ 21] 9216 1992-01-11 11:48:07 445:35 5188.5   4F 04d9f1	<< Corrupt
+[ 22] 21977 1982-12-17 17:42:22 682:39 13285.8 253F bace5f	<< Corrupt
+[ 23] 24447 2059-08-13 18:29:40 378:00 6130.5 255F ff9130	<< Corrupt
+[ 24] 38785 2000-07-28 07:17:35 209:03  32.0  17F 008004	<< Corrupt
+[ 25] 65407 1976-07-07 07:41:03 1083:38 16382.2 187F eff6ff	<< Corrupt
+[ 26] 65405 2003-03-28 23:15:12 938:40 5533.5  52F 6c5b93	<< Corrupt
+[ 27] 16512 2061-08-17 15:35:43 1091:43 183.8  76F 65ffff	<< Corrupt
+[ 28] 32767 2059-07-07 11:17:19 1088:04 6079.8 253F f6f7fd	<< Corrupt
+[ 29] 34586 2043-01-14 08:25:37  0:02 512.0  73F 510000		<< Corrupt
+[ 30] 2436 1991-12-31 23:51:27 800:47 16379.8 251F ffffff	<< Corrupt
+[ 31] 32767 1990-09-04 03:45:00  9:10 16340.0 215F fd0045	<< Corrupt
+[ 32] 33816 2009-04-12 04:52:31 618:39  32.2  20F 400004	<< Corrupt
+[ 33] 57342 2024-12-17 04:54:19 543:58 16383.8 253F bfffbf	<< Corrupt
+[ 34] 32703 2009-12-19 17:50:56 742:24 6024.2  39F 500609	<< Corrupt
+[ 35] 2816 2026-05-31 06:16:47 1083:41 127.8   0F 00ffb7	<< Corrupt
+[ 36] 49151 2084-03-27 12:59:35 779:38 16235.8 255F fdafe7	<< Corrupt
+[ 37] 43045 1991-07-06 08:24:55  0:48 280.0  59F 0072a2		<< Corrupt
+[ 38] 8230 1991-08-05 06:17:47  0:21  20.2  69F 007e7f		<< Corrupt
+[ 39]   39 1991-08-04 22:04:32  4:40 8213.8  69F 0077e0		<< Partially Corrupt
+[ 40] 2072 1988-05-26 20:08:33  0:53  21.5  68F 003985		<< Corrupt
+[ 41] 1065 1991-09-08 21:02:19  0:33  29.8  75F 107b9e		<< Corrupt
+[ 42]   42 1992-04-02 15:35:48  0:04  11.8  75F 007e5f
+[ 43]   43 1993-04-28 16:47:57  0:43  59.5  81F 007eac
+[ 44]   44 1993-06-17 11:55:01  0:48 134.0  47F 0024c8
+[ 45]   45 1993-06-17 13:36:03  0:31 132.0  47F 002838
+[ 46]   46 1993-06-19 12:28:26  1:02  85.2  49F 002a7b
+[ 47]   47 1993-06-21 17:53:38  0:58  23.0  80F 002f7b
+[ 48]   48 1993-06-22 12:14:45  1:02  53.5  81F 003350
+[ 49]   49 1993-06-22 14:21:50  1:02  46.0  81F 003736
+[ 50]   50 1993-06-22 22:12:50  0:59  40.0  81F 003b3e
+[ 51]   51 1993-06-23 12:31:44  0:46 105.5  81F 003f07
+[ 52]   52 1993-06-23 14:31:52  1:00  55.8  81F 004260
+[ 53]   53 1993-06-23 18:02:42  0:45  23.0  81F 00462c
+[ 54]   54 1993-06-24 11:14:10  0:49  71.0  78F 004903
+[ 55]   55 1993-06-24 13:02:20  0:46 137.2  80F 004c28
+[ 56]   56 1993-06-24 15:17:55  0:08   9.8  82F 004f0f
+[ 57]   57 1993-06-25 11:38:50  0:37 101.8  80F 004f8f
+[ 58]   58 1993-06-25 13:08:46  0:49  70.2  79F 005202
+[ 59]   59 1993-06-27 11:46:28  0:49 110.8  81F 005544
+[ 60]   60 1993-06-27 13:40:04  0:58  48.2  81F 0058ba
+[ 61]   61 1993-07-01 10:38:00  1:47  89.0  51F 005c7d
