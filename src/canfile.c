@@ -6,32 +6,45 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 
 #include "canfile_emc.h"
 #include "canfile_cmdr.h"
 
-//#include "dive.h"
-//#include "file.h"
-
-
-#define LOG_ENTRY_OFFSET 0x4914
-
 #define SUMMARY_HEAD "Dive  Date     Time     Duration Depth  Temp Predive  Sample   End     "
 #define SUMMARY_LINE "----- -------- -------- -------- ------ ---- -------- -------- --------"
-#define SUMMARY_FMT  "%5i %02i/%02i/%02i %02i:%02i:%02i %2ih%02i    %6.2f %3i   %08x %08x %08x\n"
+#define SUMMARY_FMT  "%5i %02i/%02i/%02i %02i:%02i:%02i %2ih%02i    %6.2f %3x   %08x %08x %08x\n"
+
+
+#define COCHRAN_EPOCH 694242000
 
 enum cochran_type {
+	TYPE_COMMANDER_TM,
 	TYPE_GEMINI,
 	TYPE_COMMANDER,
 	TYPE_EMC
 };
 
+enum file_type {
+	FILE_WAN,
+	FILE_CAN,
+};
+
 struct config {
+	enum file_type file_type;
+	unsigned char file_format;
+	unsigned int offset;		// Offset to after the list of dive pointers
+	unsigned int address_size; 	// 3 or 4 depending on the byte at .offset
+	unsigned int address_count;
 	enum cochran_type type;
 	unsigned int logbook_size;
 	unsigned int sample_size;
+	int decode_address[10];
+	int decode_key_offset[10];
+	unsigned int log_offset;
+	unsigned int profile_offset;
 } config;
-	
+
 struct memblock {
 	unsigned char * buffer;
 	unsigned int alloc, size;
@@ -43,8 +56,12 @@ typedef int (*cf_callback_t) (struct memblock dive, unsigned int dive_num, int l
 #define array_uint32_le(p) ( (unsigned int) (p)[0] \
 							+ ((p)[1]<<8) + ((p)[2]<<16) \
 							+ ((p)[3]<<24) )
+#define array_uint24_le(p) ( (unsigned int) (p)[0] + ((p)[1]<<8) + ((p)[2]<<16) )
 #define array_uint16_le(p) ( (unsigned int) (p)[0] + ((p)[1]<<8) )
 #define array_uint16_be(p) ( (unsigned int) ((p)[0]<<8) + (p)[1] )
+#define array_uint24_be(p) ( ((p)[0] << 16  + ((p)[1] << 8) + ((p)[2] )
+#define array_uint32_be(p) ( ((p)[0] << 24) + ((p)[1] << 16 + ((p)[2] << 8) + ((p)[3] )
+#define ptr_uint(t,p,i)		( ((t) == 3 ? array_uint24_le((p) + (i) * 3) : array_uint32_le((p) + (i) * 4) ) )
 
 
 #define TRUE 1
@@ -70,7 +87,7 @@ int debug = FALSE;
  * 0x40338: Computer configuration page 2, 512 bytes
  * 0x40538: Misc data (tissues) 1500 bytes
  * 0x40b14: Ownership data 512 bytes ???
- * 
+ *
  * 0x4171c: Ownership data 512 bytes ??? <copy>
  *
  * 0x45415: Time stamp 17 bytes
@@ -78,24 +95,15 @@ int debug = FALSE;
  * 0x45626: Computer configuration page 2, 512 bytes <copy>
  *
  */
-static unsigned int partial_decode(const unsigned int start, const unsigned int end,
+static void decode(const unsigned int start, const unsigned int end,
 				   const unsigned char *key, unsigned offset, const unsigned char mod,
 				   const unsigned char *cipher, const unsigned int size, unsigned char *cleartext)
 {
-	unsigned i, sum = 0;
-
-	for (i = start; i < end; i++) {
-		unsigned char d = key[offset++];
-		if (i >= size)
-			break;
-		if (offset == mod)
-			offset = 0;
-		d += cipher[i];
-		if (cleartext)
-			cleartext[i] = d;
-		sum += d;
+	for (unsigned int i = start; i < end && i < size; i++) {
+		cleartext[i] = key[offset] + cipher[i];
+		offset++;
+		offset %= mod;
 	}
-	return sum;
 }
 
 #define hexchar(n) ("0123456789abcdef"[(n) & 15])
@@ -140,21 +148,92 @@ static int show_line(unsigned offset, const unsigned char *data,
 static void cochran_debug_write(const unsigned char *data, unsigned size)
 {
 	unsigned int show = 1,  i;
-	
+
 	for (i = 0; i < size; i += 16)
 		show = show_line(i, data + i, size - i, show);
 }
 
 
 // Get useful values from header
-static void parse_header(const struct memblock clearfile)
+static void parse_header(const struct memblock *clearfile)
 {
-	const unsigned char *header = clearfile.buffer + 0x40102;
-	int header_size = *(int *)clearfile.buffer - 0x40102;
+	const unsigned char *header = clearfile->buffer + config.offset + 0x102;
+	int header_size = ptr_uint(config.address_size, clearfile->buffer, 0) - (config.offset + 0x102);
+
+	//0x5dc - 0x64a : log          0x5dc - 0x6dc : log       0x5dc - 0x6dc : log
+	// 0x64a - 0x659 : ????         0x6dc -                   0x6dc -
+	// 0x659 - 0x6b9 : ????               - 0x7d5 : ???             - 0x6f1 : ???
+	// 0x6b9 - end   : Samples      0x7d5 - end   : samples   0x6f1 - end   : samples
+	//
+	// Determine addressing format
+	switch(config.file_format) {
+	case 0x43:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x5dc;
+		config.decode_address[2] = 0x64a;
+		config.decode_address[3] = 0x659;
+		config.decode_address[4] = 0x6b9;
+		config.decode_address[5] = -1;
+		config.decode_key_offset[0] = -1; // don't decode first section;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		break;
+	case 0x4f:
+// TODO: Comander.wan, ComPlus.wan, GemPNox.wan, Lifeguard.wan no sample
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x5dc;
+		if (header[0x32] == '0') {
+			// GemPNox
+			config.decode_address[2] = 0x6f1;	// 0x6f1: GemPNox, 0x6b9: others
+		} else {
+			config.decode_address[2] = 0x6b9;	// 0x6f1: GemPNox, 0x6b9: others
+		}
+		config.decode_address[3] = -1;
+		config.decode_key_offset[0] = -1; // don't decode first section;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		config.log_offset = 0xfea;
+		break;
+	case 0x45:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x5dc;
+		config.decode_address[2] = 0x6f1;// Cmd1Mix 0x6dc
+		//config.decode_address[3] = 0x7d5;
+		config.decode_address[3] = -1;
+		config.decode_key_offset[0] = -1; // don't decode first section;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		break;
+	case 0x46:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x0fff;
+		config.decode_address[2] = 0x1fff;
+		config.decode_address[3] = 0x2fff;
+		config.decode_address[4] = 0x48ff;
+		config.decode_address[5] = 0x491f + config.logbook_size;
+		config.decode_address[6] = -1;
+		config.decode_key_offset[0] = 1;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		break;
+	default:
+		fprintf(stderr, "Uknown file format %02x.\n", clearfile->buffer[config.offset]);
+		exit(1);
+		break;
+	}
+
+	config.address_count = config.offset / config.address_size;
 
 	// Detect log type
 	switch (header[0x031])
 	{
+// TODO: Nem2a format
+// TODO: GemPNox format
+	case '1':	// Cochran Commander, version I log format
+		config.logbook_size = 90;
+		config.type = TYPE_COMMANDER_TM;
+		config.sample_size = 1;
+		break;
 	case '2':	// Cochran Commander, version II log format
 		config.logbook_size = 256;
 		if (header[0x030] == 0x10) {
@@ -171,8 +250,8 @@ static void parse_header(const struct memblock clearfile)
 		config.sample_size = 3;
 		break;
 	default:
-		fprintf (stderr, "Unknown log format v%c\n", header[0x137]);
-		exit(1);
+		fprintf (stderr, "Unknown log format %02x %02x\n", header[0x30], header[0x031]);
+		//exit(1);
 		break;
 	}
 	if (debug) {
@@ -202,6 +281,9 @@ static int cochran_predive_event_bytes (unsigned char code)
 
 	switch (config.type)
 	{
+	case TYPE_COMMANDER_TM:
+		// doesn't have inter-dive events;
+		break;
 	case TYPE_GEMINI:
 	case TYPE_COMMANDER:
 		while (cmdr_event_bytes[x][0] != code && cmdr_event_bytes[x][0] != -1)
@@ -242,14 +324,31 @@ static int print_dive_summary(struct memblock dive,
 
 	struct cochran_cmdr_log_t *cmdr_log = (cochran_cmdr_log_t *) log;
 	struct cochran_emc_log_t *emc_log = (cochran_emc_log_t *) log;
+	const unsigned char *tm_log = dive.buffer + 0x5dc +21;
+	time_t ts = 0;
+	struct tm t;
 
 	switch (config.type)
 	{
+// TODO: Nemo2a format
+// TODO: GemPNox format
+	case TYPE_COMMANDER_TM:
+		ts = array_uint32_le(tm_log + 15) + COCHRAN_EPOCH;
+		localtime_r(&ts, &t);
+		printf(SUMMARY_FMT, dive_num, t.tm_mday, t.tm_mon + 1, t.tm_year + 1900,
+			t.tm_hour, t.tm_min, t.tm_sec,
+			array_uint16_le(tm_log + 47) / 60, array_uint16_le(tm_log + 47) % 60,
+			(float) array_uint16_le(tm_log + 49) / 4.0,
+			tm_log[81],
+			array_uint24_le(tm_log),
+			array_uint24_le(tm_log),
+			0);
+		break;
 	case TYPE_GEMINI:
 	case TYPE_COMMANDER:
 		printf(SUMMARY_FMT, dive_num, cmdr_log->day, cmdr_log->month, cmdr_log->year,
 			cmdr_log->hour, cmdr_log->minutes, cmdr_log->seconds,
-			array_uint16_le(cmdr_log->bt)/60, array_uint16_le(cmdr_log->bt)%60, 
+			array_uint16_le(cmdr_log->bt)/60, array_uint16_le(cmdr_log->bt)%60,
 			(float) array_uint16_le(cmdr_log->max_depth)/4,
 			cmdr_log->temp,
 			array_uint32_le(cmdr_log->sample_pre_event_offset),
@@ -259,7 +358,7 @@ static int print_dive_summary(struct memblock dive,
 	case TYPE_EMC:
 		printf(SUMMARY_FMT, dive_num, emc_log->day, emc_log->month, emc_log->year,
 			emc_log->hour, emc_log->minutes, emc_log->seconds,
-			array_uint16_le(emc_log->bt)/60, array_uint16_le(emc_log->bt)%60, 
+			array_uint16_le(emc_log->bt)/60, array_uint16_le(emc_log->bt)%60,
 			(float) array_uint16_le(emc_log->max_depth)/4,
 			emc_log->temp,
 			array_uint32_le(emc_log->sample_pre_event_offset),
@@ -554,7 +653,7 @@ static int print_dive_samples_cb(struct memblock dive,
 				break;
 			}
 		}
-	
+
 		printf ("%02d:%02d:%02d Depth: %-5.2f, ", (sample_cnt * profile_period) / 3660,
 							((sample_cnt * profile_period) % 3660) / 60, (sample_cnt * profile_period) % 60, depth);
 
@@ -636,12 +735,141 @@ static int print_dive_samples_cb(struct memblock dive,
 
 
 static int decode_dive(struct memblock dive, unsigned int dive_num, int last_dive, void *userdata) {
-
 	struct memblock *clearfile = (struct memblock *) userdata;
-	const unsigned char *key = clearfile->buffer + 0x40001;
+	const unsigned char *key = clearfile->buffer + config.offset + 0x01;
 	const unsigned char mod = key[0x100] + 1;
-	const int *dives = (int *) clearfile->buffer;
-	const int dive_offset = dives[dive_num - 1];
+	const unsigned char *dives = (unsigned char *) clearfile->buffer;
+
+	const int dive_offset = ptr_uint(config.address_size, dives, dive_num - 1);
+	int *addr = config.decode_address;
+	int *koff = config.decode_key_offset;
+
+// Print cipher
+/*
+int from = 0x6f1  + 0, to = from + 256; //dive.size;
+printf("cpher test\n\n");
+	for (int c = from; c < to; c+= 32) {
+		int end = 32;
+		if (c + end > to) end = to - c;
+		for (int cc = 0; cc < end; cc++)
+			printf("%02x ", dive.buffer[c + cc]);
+		printf("\n");
+	}
+for (int o = from; o < to; o++) {
+			decode(o, to,
+				key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+	printf("\n\noffset = %06x (mod %02x)\n\n", o, mod);
+	for (int c = o; c < to; c+= 32) {
+		int end = 32;
+		if (c + end > to) end = to - c;
+		for (int cc = 0; cc < end; cc++)
+			printf("%02x ", clearfile->buffer[dive_offset + c + cc]);
+		printf("\n");
+	}
+}
+*/
+	if (!last_dive) {
+		while (*addr != -1) {
+			int end_addr = *(addr + 1);
+			if (end_addr == -1) end_addr = dive.size;
+
+			if (*koff == -1)
+				memcpy(clearfile->buffer + dive_offset, dive.buffer, end_addr - *addr);
+			else
+				decode(*addr, end_addr, key, *koff, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+
+			addr++;
+			koff++;
+		}
+	} else {
+		decode(0, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+	}
+
+	return 0;
+}
+
+
+
+static int wan_decode_dive(struct memblock dive, unsigned int dive_num, int last_dive, void *userdata) {
+	struct memblock *clearfile = (struct memblock *) userdata;
+	const unsigned char *key = clearfile->buffer + config.offset + 0x01;
+	const unsigned char mod = key[0x100] + 1;
+	const unsigned char *dives = (unsigned char *) clearfile->buffer;
+	const int dive_offset = ptr_uint(config.address_size, dives, dive_num - 1);
+
+fprintf(stderr, "# %d, dive_offset: %08x, size: %0x\n", dive_num, dive_offset, dive.size);
+	if (last_dive == 0) {
+		// WAN
+		// 0x43                         0x45                      0x4f
+		//
+		// 0     - 0x5dc : zeros		0     - 0x5dc : zeros     0     - 0x5dc : zeros
+		// 0x5dc - 0x64a : log          0x5dc - 0x6dc : log       0x5dc - 0x6dc : log
+		// 0x64a - 0x659 : ????         0x6dc -                   0x6dc -
+		// 0x659 - 0x6b9 : ????               - 0x7d5 : ???             - 0x6f1 : ???
+		// 0x6b9 - end   : Samples		0x7d5 - end   : samples   0x6f1 - end   : samples
+
+
+		// Decode (copy) header and log section
+		memcpy(clearfile->buffer + dive_offset, dive.buffer, 0x5dc);
+		decode(0x5dc, 0x64a, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+
+		int sample_size = dive.size - 0x5dc - config.logbook_size;
+		if (sample_size > 0) {
+
+			switch (config.file_format) {
+			case 0x43:		// Very old
+				decode(0x64a, 0x659, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				// this next one is likely wrong
+				decode(0x659, 0x6b9, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				decode(0x6b9, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				break;
+			case 0x45:
+				decode(0x6dc, 0x7d5, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				// this next one is likely wrong
+				decode(0x7d5, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				break;
+			case 0x4f:
+				decode(0x6dc, 0x6f1, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				// this next one is likely wrong
+				decode(0x6f1, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+				break;
+			}
+
+// Print cipher
+/*
+int from = 0x6dc + 128, to = from + 96; //dive.size;
+printf("cpher test\n\n");
+	for (int c = from; c < to; c+= 32) {
+		int end = 32;
+		if (c + end > to) end = to - c;
+		for (int cc = 0; cc < end; cc++)
+			printf("%02x ", dive.buffer[c + cc]);
+		printf("\n");
+	}
+for (int o = from; o < to; o++) {
+			decode(o, to,
+				key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+	printf("\n\noffset = %06x (mod %02x)\n\n", o, mod);
+	for (int c = o; c < to; c+= 32) {
+		int end = 32;
+		if (c + end > to) end = to - c;
+		for (int cc = 0; cc < end; cc++)
+			printf("%02x ", clearfile->buffer[dive_offset + c + cc]);
+		printf("\n");
+	}
+}
+*/
+		}
+	}
+	return(0);
+}
+
+static int can_decode_dive(struct memblock dive, unsigned int dive_num, int last_dive, void *userdata) {
+	struct memblock *clearfile = (struct memblock *) userdata;
+	const unsigned char *key = clearfile->buffer + config.offset + 0x01;
+	const unsigned char mod = key[0x100] + 1;
+	const unsigned char *dives = (unsigned char *) clearfile->buffer;
+	const int dive_offset = ptr_uint(config.address_size, dives, dive_num - 1);
 
 	if (last_dive == 0) {
 		/*
@@ -654,11 +882,12 @@ static int decode_dive(struct memblock dive, unsigned int dive_num, int last_div
 	 	* the same way the file size is off by one. It's as if the
 	 	* cochran software forgot to write one byte at the beginning.
 	 	*/
-		partial_decode(0,      0x0fff, key, 1, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
-		partial_decode(0x0fff, 0x1fff, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
-		partial_decode(0x1fff, 0x2fff, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
-		partial_decode(0x2fff, 0x48ff, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
-	
+		decode(0,      0x0fff, key, 1, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+		decode(0x0fff, 0x1fff, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+		decode(0x1fff, 0x2fff, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+		decode(0x2fff, 0x48ff, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+
+
 		/*
 	 	* This is not all the descrambling you need - the above are just
 	 	* what appears to be the fixed-size blocks. The rest is also
@@ -666,48 +895,47 @@ static int decode_dive(struct memblock dive, unsigned int dive_num, int last_div
 	 	* so this just descrambles part of it:
 	 	*/
 		// Decode log entry (512 bytes + random prefix)
-		partial_decode(0x48ff, 0x4914 + config.logbook_size,
+		decode(0x48ff, 0x4914 + config.logbook_size,
 				key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
-	
+
 		int sample_size = dive.size - 0x4914 - config.logbook_size;
 		if (sample_size > 0) {
 			// Decode sample data
-			partial_decode(0x4914 + config.logbook_size, dive.size,
-				key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+			decode(0x4914 + config.logbook_size, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
 		}
 	} else {
-		partial_decode(0, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
+		decode(0, dive.size, key, 0, mod, dive.buffer, dive.size, clearfile->buffer + dive_offset);
 	}
-	
+
 	return(0);
 }
 
 
 static int foreach_dive(const struct memblock clearfile, cf_callback_t callback, void *userdata) {
-	const unsigned int *dives = (unsigned int *) clearfile.buffer;
+	const unsigned char *dives = (unsigned char *) clearfile.buffer;
 
-	if (clearfile.size < 0x40102)
+	if (clearfile.size < config.offset + 0x102)
 		return 0;
 
 	int result = 0;
 	unsigned int dive_end = 0;
 	struct memblock dive;
 	unsigned int i = 0;
-	while (dives[i] && i < 65534) {
-		dive_end = dives[i + 1];
+	while (ptr_uint(config.address_size, dives, i) && i < config.address_count - 2) {
+		dive_end = ptr_uint(config.address_size, dives, i + 1);
 
 		// check out of range
-		if (dive_end < dives[i] || dive_end > clearfile.size)
+		if (dive_end < ptr_uint(config.address_size, dives, i) || dive_end > clearfile.size)
 			break;
 
-		dive.size = dive_end - dives[i];
+		dive.size = dive_end - ptr_uint(config.address_size, dives, i);
 		dive.buffer = malloc(dive.size);
 		if (!dive.buffer) {
 			fputs("Unable to allocate dive.buffer space.\n", stderr);
 			exit(1);
 		}
 
-		memcpy(dive.buffer, clearfile.buffer + dives[i], dive.size);
+		memcpy(dive.buffer, clearfile.buffer + ptr_uint(config.address_size, dives, i), dive.size);
 
 		if (callback)
 			result = (callback)(dive, i+1, 0, userdata);
@@ -720,16 +948,16 @@ static int foreach_dive(const struct memblock clearfile, cf_callback_t callback,
 	}
 
 	// Now process the trailing inter-dive events
-	if (dives[65534] - 1 > dives[i] && dives[65534] - 1 <= clearfile.size) {
-		dive.size = dives[65534] - 1 - dives[i];
+	if (ptr_uint(config.address_size, dives, config.address_count - 2) - 1 > ptr_uint(config.address_size, dives, i) && ptr_uint(config.address_size, dives, config.address_count - 2) - 1 <= clearfile.size) {
+		dive.size = ptr_uint(config.address_size, dives, config.address_count - 2) - 1 - ptr_uint(config.address_size, dives, i);
 
 		dive.buffer = malloc(dive.size);
 		if (!dive.buffer) {
 			fputs("Unable to allocate dive.buffer space.\n", stderr);
 			exit(1);
 		}
-	
-		memcpy(dive.buffer, clearfile.buffer + dives[i], dive.size);
+
+		memcpy(dive.buffer, clearfile.buffer + ptr_uint(config.address_size, dives, i), dive.size);
 
 		if (callback)
 			result = (callback)(dive, i+1, 1, userdata);
@@ -740,7 +968,7 @@ static int foreach_dive(const struct memblock clearfile, cf_callback_t callback,
 	}
 	return(0);
 }
-	
+
 
 struct memblock read_can(int fp) {
 	struct memblock canfile;
@@ -770,54 +998,61 @@ struct memblock read_can(int fp) {
 	return(canfile);
 }
 
-struct memblock decode_can(struct memblock canfile) {
+void decode_file(struct memblock canfile, struct memblock *clearfile) {
+	const unsigned char *key = canfile.buffer + config.offset + 0x01;
+	const unsigned char mod = key[0x100] + 1;
 
-	struct memblock clearfile;
+	// The base offset we'll use for accessing the header
+	unsigned int o = config.offset + 0x102;
+	// Header size
+	unsigned int hend = ptr_uint(config.address_size, canfile.buffer, 0);
 
-	clearfile.alloc = canfile.size;
-	clearfile.buffer = malloc(clearfile.alloc);
-	if (!clearfile.buffer) {
-		fputs("Unable to allocated memory for clearfile.", stderr);
-		exit(1);
-	}
+	// Copy the non-encrypted header (dive pointers, key, and mod)
+	memcpy(clearfile->buffer, canfile.buffer, o);
+	clearfile->size = o;
 
-	// Copy the non-encrypted header
-	memcpy(clearfile.buffer, canfile.buffer, 0x40102);
-	clearfile.size = 0x40102;
-
-	unsigned int hsize = (*(unsigned int *) clearfile.buffer) - 0x40102;
-
-	/* Do the "null decode" using a one-byte decode array of '\0' */
-	/* Copies in plaintext, will be overwritten later */
-	partial_decode(0, 0x0102, (unsigned char *) "", 0, 1, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-
-	/* Copy the header information
-	*  It was a weird cipher patter that may tell us the boundaries of
+	/* Decrypt the header information
+	*  It was a weird cipher pattern that may tell us the boundaries of
 	*  structures.
 	*/
-	// header size is the space between 0x40102 and the first dive.
-	const unsigned char *key = canfile.buffer + 0x40001;
-	const unsigned char mod = key[100] + 1;
-	partial_decode(0x0000, 0x000c, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-	partial_decode(0x000c, 0x0a12, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-	partial_decode(0x0a12, 0x1a12, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-	partial_decode(0x1a12, 0x2a12, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-	partial_decode(0x2a12, 0x3a12, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-	partial_decode(0x3a12, 0x5312, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
-	partial_decode(0x5312,  hsize, key, 0, mod, canfile.buffer + 0x40102, hsize, clearfile.buffer + 0x40102);
+	/*
+	* header size is the space between 0x40102 (0x30102 for WAN) and the first dive.
+	* CAN					WAN
+	* 0x0000 - 0x000c		0x0000 - 0x000c
+	* 0x000c - 0x0a12		0x000c - 0x048e
+	* 0x0a12 - 0x1a12		0x048e - 0x1a12
+	* 0x1a12 - 0x2a12		0x1a12 - 0x2a12
+	* 0x2a12 - 0x3a12		0x2a12 - 0x3a12
+	* 0x3a12 - 0x5312		0x3a12 - 0x5312
+	* 0x5312 - end			0x5312 - end
+	*/
+	if (config.file_type == FILE_WAN) {
+		decode(o + 0x0000, o + 0x000c, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x000c, o + 0x048e, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x048e, o + 0x1a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x1a12, o + 0x2a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x2a12, o + 0x3a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x3a12, o + 0x5312, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x5312, hend,       key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+	} else {
+		decode(o + 0x0000, o + 0x000c, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x000c, o + 0x048e, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x048e, o + 0x1a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x1a12, o + 0x2a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x2a12, o + 0x3a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x3a12, o + 0x5312, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x5312, hend,       key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+	}
 
 	parse_header(clearfile);
-	
-	foreach_dive(canfile, decode_dive, (void *) &clearfile);
+
+	foreach_dive(canfile, decode_dive, (void *) clearfile);
 
 	// Erase the key, since we are decoded
-	for (int x = 0x40001 ; x < 0x40101; x++)
-		clearfile.buffer[x] = 0;
-	
+	for (int x = config.offset + 0x01 ; x < config.offset + 0x101; x++)
+		clearfile->buffer[x] = 0;
 
-	clearfile.size = canfile.size;
-
-	return(clearfile);
+	clearfile->size = canfile.size;
 }
 
 
@@ -863,12 +1098,43 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "Error opening file (%s): %s\n", argv[optind], strerror(errno));
 			exit(1);
 		}
-	}	
-		
+	}
+
 	// Read file
 	struct memblock canfile = read_can(fp);
-	struct memblock clearfile = decode_can(canfile);
-	//free(canfile.buffer);
+
+	// Determine type of file (wan or can)
+	int ext = strlen(argv[optind]) - 4;
+	if (!strcasecmp(argv[optind] + ext, ".wan")) {
+		config.file_type = FILE_WAN;
+		config.offset = 0x30000;
+	} else {
+		config.file_type = FILE_CAN;
+		config.offset = 0x40000;
+	}
+
+	config.file_format = canfile.buffer[config.offset];
+	switch (config.file_format) {
+	case 0x43:
+	case 0x4f:
+		config.address_size = 3;
+		break;
+	case 0x45:
+	case 0x46:
+		config.address_size = 4;
+		break;
+	}
+
+	struct memblock clearfile;
+	clearfile.alloc = canfile.size;
+	clearfile.buffer = malloc(clearfile.alloc);
+	if (!clearfile.buffer) {
+		fputs("Unable to allocated memory for clearfile.", stderr);
+		exit(1);
+	}
+
+	decode_file(canfile, &clearfile);
+
 	canfile.alloc = canfile.size = 0;
 
 
@@ -887,6 +1153,9 @@ int main(int argc, char *argv[]) {
 		foreach_dive(clearfile, print_dive_summary_cb, 0);
 		break;
 	}
+
+	free(canfile.buffer);
+	free(clearfile.buffer);
 
 	exit(0);
 }
