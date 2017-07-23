@@ -8,15 +8,8 @@
 #include <errno.h>
 #include <time.h>
 
-#include "canfile_emc.h"
-#include "canfile_cmdr.h"
-
-#define SUMMARY_HEAD "Dive  Date     Time     Duration Depth  Temp Predive  Sample   End     "
-#define SUMMARY_LINE "----- -------- -------- -------- ------ ---- -------- -------- --------"
-#define SUMMARY_FMT  "%5i %02i/%02i/%02i %02i:%02i:%02i %2ih%02i    %6.2f %3x   %08x %08x %08x\n"
-
-
-#define COCHRAN_EPOCH 694242000
+#include "cochran.h"
+#include "cochran_log.h"
 
 enum cochran_type {
 	TYPE_COMMANDER_TM,
@@ -52,15 +45,6 @@ struct memblock {
 
 typedef int (*cf_callback_t) (struct memblock dive, unsigned int dive_num, int last_dive, void *userdata);
 
-// Convert 4 bytes into an INT
-#define array_uint32_le(p) ( (unsigned int) (p)[0] \
-							+ ((p)[1]<<8) + ((p)[2]<<16) \
-							+ ((p)[3]<<24) )
-#define array_uint24_le(p) ( (unsigned int) (p)[0] + ((p)[1]<<8) + ((p)[2]<<16) )
-#define array_uint16_le(p) ( (unsigned int) (p)[0] + ((p)[1]<<8) )
-#define array_uint16_be(p) ( (unsigned int) ((p)[0]<<8) + (p)[1] )
-#define array_uint24_be(p) ( ((p)[0] << 16  + ((p)[1] << 8) + ((p)[2] )
-#define array_uint32_be(p) ( ((p)[0] << 24) + ((p)[1] << 16 + ((p)[2] << 8) + ((p)[3] )
 #define ptr_uint(t,p,i)		( ((t) == 3 ? array_uint24_le((p) + (i) * 3) : array_uint32_le((p) + (i) * 4) ) )
 
 
@@ -160,71 +144,7 @@ static void parse_header(const struct memblock *clearfile)
 	const unsigned char *header = clearfile->buffer + config.offset + 0x102;
 	int header_size = ptr_uint(config.address_size, clearfile->buffer, 0) - (config.offset + 0x102);
 
-	//0x5dc - 0x64a : log          0x5dc - 0x6dc : log       0x5dc - 0x6dc : log
-	// 0x64a - 0x659 : ????         0x6dc -                   0x6dc -
-	// 0x659 - 0x6b9 : ????               - 0x7d5 : ???             - 0x6f1 : ???
-	// 0x6b9 - end   : Samples      0x7d5 - end   : samples   0x6f1 - end   : samples
-	//
-	// Determine addressing format
-	switch(config.file_format) {
-	case 0x43:
-		config.decode_address[0] = 0;
-		config.decode_address[1] = 0x5dc;
-		config.decode_address[2] = 0x64a;
-		config.decode_address[3] = 0x659;
-		config.decode_address[4] = 0x6b9;
-		config.decode_address[5] = -1;
-		config.decode_key_offset[0] = -1; // don't decode first section;
-		for (int i = 1; i < 10; i++)
-			config.decode_key_offset[i] = 0;
-		break;
-	case 0x4f:
-// TODO: Comander.wan, ComPlus.wan, GemPNox.wan, Lifeguard.wan no sample
-		config.decode_address[0] = 0;
-		config.decode_address[1] = 0x5dc;
-		if (header[0x32] == '0') {
-			// GemPNox
-			config.decode_address[2] = 0x6f1;	// 0x6f1: GemPNox, 0x6b9: others
-		} else {
-			config.decode_address[2] = 0x6b9;	// 0x6f1: GemPNox, 0x6b9: others
-		}
-		config.decode_address[3] = -1;
-		config.decode_key_offset[0] = -1; // don't decode first section;
-		for (int i = 1; i < 10; i++)
-			config.decode_key_offset[i] = 0;
-		config.log_offset = 0xfea;
-		break;
-	case 0x45:
-		config.decode_address[0] = 0;
-		config.decode_address[1] = 0x5dc;
-		config.decode_address[2] = 0x6f1;// Cmd1Mix 0x6dc
-		//config.decode_address[3] = 0x7d5;
-		config.decode_address[3] = -1;
-		config.decode_key_offset[0] = -1; // don't decode first section;
-		for (int i = 1; i < 10; i++)
-			config.decode_key_offset[i] = 0;
-		break;
-	case 0x46:
-		config.decode_address[0] = 0;
-		config.decode_address[1] = 0x0fff;
-		config.decode_address[2] = 0x1fff;
-		config.decode_address[3] = 0x2fff;
-		config.decode_address[4] = 0x48ff;
-		config.decode_address[5] = 0x491f + config.logbook_size;
-		config.decode_address[6] = -1;
-		config.decode_key_offset[0] = 1;
-		for (int i = 1; i < 10; i++)
-			config.decode_key_offset[i] = 0;
-		break;
-	default:
-		fprintf(stderr, "Uknown file format %02x.\n", clearfile->buffer[config.offset]);
-		exit(1);
-		break;
-	}
-
-	config.address_count = config.offset / config.address_size;
-
-	// Detect log type
+	// Detect computer log version
 	switch (header[0x031])
 	{
 // TODO: Nem2a format
@@ -254,6 +174,77 @@ static void parse_header(const struct memblock *clearfile)
 		//exit(1);
 		break;
 	}
+
+	//0x5dc - 0x64a : log          0x5dc - 0x6dc : log       0x5dc - 0x6dc : log
+	// 0x64a - 0x659 : ????         0x6dc -                   0x6dc -
+	// 0x659 - 0x6b9 : ????               - 0x7d5 : ???             - 0x6f1 : ???
+	// 0x6b9 - end   : Samples      0x7d5 - end   : samples   0x6f1 - end   : samples
+	//
+	// Determine addressing format
+	switch(config.file_format) {
+	case 0x43:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x5dc;
+		config.decode_address[2] = 0x64a;
+		config.decode_address[3] = 0x659;
+		config.decode_address[4] = 0x6b9;
+		config.decode_address[5] = -1;
+		config.decode_key_offset[0] = -1; // don't decode first section;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		config.log_offset = 0x5f1;
+		config.profile_offset = (config.logbook_size == 90 ? 0x6b9 : 0x6f1);
+		break;
+	case 0x4f:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x5dc;
+		if (header[0x32] == '0') {
+			// GemPNox
+			config.decode_address[2] = 0x6f1;	// 0x6f1: GemPNox, 0x6b9: others
+		} else {
+			config.decode_address[2] = 0x6b9;	// 0x6f1: GemPNox, 0x6b9: others
+		}
+		config.decode_address[3] = -1;
+		config.decode_key_offset[0] = -1; // don't decode first section;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		config.log_offset = 0x5f1;
+		config.profile_offset = (config.logbook_size == 90 ? 0x6b9 : 0x6f1);
+		break;
+	case 0x45:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x5dc;
+		config.decode_address[2] = 0x6f1;// Cmd1Mix 0x6dc
+		//config.decode_address[3] = 0x7d5;
+		config.decode_address[3] = -1;
+		config.decode_key_offset[0] = -1; // don't decode first section;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		config.log_offset = 0x5f1;
+		config.profile_offset = (config.logbook_size == 90 ? 0x6b9 : 0x6f1);
+		break;
+	case 0x46:
+		config.decode_address[0] = 0;
+		config.decode_address[1] = 0x0fff;
+		config.decode_address[2] = 0x1fff;
+		config.decode_address[3] = 0x2fff;
+		config.decode_address[4] = 0x48ff;
+		config.decode_address[5] = 0x491f + config.logbook_size;
+		config.decode_address[6] = -1;
+		config.decode_key_offset[0] = 1;
+		for (int i = 1; i < 10; i++)
+			config.decode_key_offset[i] = 0;
+		config.log_offset = 0x4914;
+		config.profile_offset = config.log_offset + config.logbook_size;
+		break;
+	default:
+		fprintf(stderr, "Uknown file format %02x.\n", clearfile->buffer[config.offset]);
+		exit(1);
+		break;
+	}
+
+	config.address_count = config.offset / config.address_size;
+
 	if (debug) {
 		fputs("Header\n======\n\n", stderr);
 		cochran_debug_write(header, header_size);
@@ -302,76 +293,43 @@ static int cochran_predive_event_bytes (unsigned char code)
 }
 
 
-
-// Print dive heading
-static int print_dive_summary(struct memblock dive,
-			unsigned int dive_num, int last_dive, void *userdata)
-{
-	const unsigned char *log =  dive.buffer + 0x4914;
-
-	if (last_dive)
-		return(0);
-
-	if (debug) {
-		// Display pre-logbook data
-		fputs("\nPre Logbook Data\n", stderr);
-		cochran_debug_write(dive.buffer, 0x4914);
-
-		// Display log book
-		fputs("\nLogbook Data\n", stderr);
-		cochran_debug_write(log,  config.logbook_size + 0x700);
-	}
-
-	struct cochran_cmdr_log_t *cmdr_log = (cochran_cmdr_log_t *) log;
-	struct cochran_emc_log_t *emc_log = (cochran_emc_log_t *) log;
-	const unsigned char *tm_log = dive.buffer + 0x5dc +21;
-	time_t ts = 0;
-	struct tm t;
-
-	switch (config.type)
-	{
+void parse_log(const unsigned char *log_buf, cochran_log_t *log) {
+	switch (config.type) {
 // TODO: Nemo2a format
 // TODO: GemPNox format
 	case TYPE_COMMANDER_TM:
-		ts = array_uint32_le(tm_log + 15) + COCHRAN_EPOCH;
-		localtime_r(&ts, &t);
-		printf(SUMMARY_FMT, dive_num, t.tm_mday, t.tm_mon + 1, t.tm_year + 1900,
-			t.tm_hour, t.tm_min, t.tm_sec,
-			array_uint16_le(tm_log + 47) / 60, array_uint16_le(tm_log + 47) % 60,
-			(float) array_uint16_le(tm_log + 49) / 4.0,
-			tm_log[81],
-			array_uint24_le(tm_log),
-			array_uint24_le(tm_log),
-			0);
+		cochran_log_commander_tm_parse(log_buf, log);
 		break;
 	case TYPE_GEMINI:
 	case TYPE_COMMANDER:
-		printf(SUMMARY_FMT, dive_num, cmdr_log->day, cmdr_log->month, cmdr_log->year,
-			cmdr_log->hour, cmdr_log->minutes, cmdr_log->seconds,
-			array_uint16_le(cmdr_log->bt)/60, array_uint16_le(cmdr_log->bt)%60,
-			(float) array_uint16_le(cmdr_log->max_depth)/4,
-			cmdr_log->temp,
-			array_uint32_le(cmdr_log->sample_pre_event_offset),
-			array_uint32_le(cmdr_log->sample_start_offset),
-			array_uint32_le(cmdr_log->sample_end_offset));
+		cochran_log_commander_II_parse(log_buf, log);
 		break;
 	case TYPE_EMC:
-		printf(SUMMARY_FMT, dive_num, emc_log->day, emc_log->month, emc_log->year,
-			emc_log->hour, emc_log->minutes, emc_log->seconds,
-			array_uint16_le(emc_log->bt)/60, array_uint16_le(emc_log->bt)%60,
-			(float) array_uint16_le(emc_log->max_depth)/4,
-			emc_log->temp,
-			array_uint32_le(emc_log->sample_pre_event_offset),
-			array_uint32_le(emc_log->sample_start_offset),
-			array_uint32_le(emc_log->sample_end_offset));
+		cochran_log_emc_parse(log_buf, log);
 		break;
 	default:
 		fputs("Invalid conig.type", stderr);
 		break;
 	}
+}
+
+
+// Print dive heading
+static int print_dive_summary(struct memblock dive, unsigned int dive_num, int last_dive, void *userdata)
+{
+	const unsigned char *log_buf =  dive.buffer + config.log_offset;
+
+	if (last_dive)
+		return(0);
+
+	cochran_log_t log;
+	parse_log(log_buf, &log);
+
+	cochran_log_print_short(&log, dive_num);
 
 	return(0);
 }
+
 
 // Callback function that tracks lines to reproduce heading
 static int print_dive_summary_cb( struct memblock dive,
@@ -380,8 +338,7 @@ static int print_dive_summary_cb( struct memblock dive,
 	static int count = 0;
 
 	if (count == 0 && !last_dive) {
-		puts(SUMMARY_HEAD);
-		puts(SUMMARY_LINE);
+		cochran_log_print_short_header(1);
 	}
 
 	count++;
@@ -405,17 +362,23 @@ static int print_dive_samples_cb(struct memblock dive,
 	unsigned int deco_obligation = 0, deco_ceiling = 0, deco_time = 0;
 	char *event_desc;
 
+	unsigned char *log_buf = dive.buffer + config.log_offset;
+	cochran_log_t log;
+
+	parse_log(log_buf, &log);
+
 	unsigned char *samples;
+
 	unsigned int sample_size;
-	unsigned char profile_period = 1; 	// seconds between samples
+	unsigned char profile_interval = log.profile_interval; 	// seconds between samples
 
 	if (last_dive) {
 		// last dive section contains only interdive events, no log
 		samples = dive.buffer;
 		sample_size = dive.size;
 	} else {
-		samples = dive.buffer + 0x4914 + config.logbook_size;
-		sample_size = dive.size - 0x4914 - config.logbook_size;
+		samples = dive.buffer + config.profile_offset;
+		sample_size = dive.size - config.profile_offset;
 	}
 
 	// Skip past pre-dive events
@@ -437,42 +400,19 @@ static int print_dive_samples_cb(struct memblock dive,
 	puts("\n");
 
 	// Invalid dive summary
-	if (dive.size < 0x4914 + config.logbook_size)
+	if (dive.size < config.profile_offset)
 		return(0);
 
-	const cochran_cmdr_log_t *log_cmdr = (cochran_cmdr_log_t *) (dive.buffer + 0x4914);
-	const cochran_emc_log_t *log_emc = (cochran_emc_log_t *) (dive.buffer + 0x4914);
-
-	puts(SUMMARY_HEAD);
-	puts(SUMMARY_LINE);
+	cochran_log_print_short_header(1);
 	print_dive_summary(dive, dive_num, last_dive, userdata);
 
 	unsigned int sample_start_offset = 0, sample_end_offset = 0;
-	// Get starting depth and temp (tank PSI???)
-	switch (config.type)
-	{
-	case TYPE_GEMINI:
-		profile_period = log_cmdr->profile_period;
-		sample_start_offset = array_uint32_le(log_cmdr->sample_start_offset);
-		sample_end_offset = array_uint32_le(log_cmdr->sample_end_offset);
-		depth = (float) array_uint16_le(log_cmdr->start_depth) / 4;
-		psi = array_uint16_le(log_cmdr->start_psi);
-		sgc_rate = (float) array_uint16_le(log_cmdr->start_sgc) / 2;
-		break;
-	case TYPE_COMMANDER:
-		profile_period = log_cmdr->profile_period;
-		sample_start_offset = array_uint32_le(log_cmdr->sample_start_offset);
-		sample_end_offset = array_uint32_le(log_cmdr->sample_end_offset);
-		depth = (float) array_uint16_le(log_cmdr->start_depth) / 4;
-		break;
-	case TYPE_EMC:
-		profile_period = log_emc->profile_period;
-		sample_start_offset = array_uint32_le(log_emc->sample_start_offset);
-		sample_end_offset = array_uint32_le(log_emc->sample_end_offset);
-		depth = (float) array_uint16_le(log_emc->start_depth) / 256;
-		temp = log_emc->start_temperature;
-		break;
-	}
+	sample_start_offset = log.profile_begin;
+	sample_end_offset = log.profile_end;
+	depth = log.depth_start;
+	psi = log.tank_pressure_start;
+	sgc_rate = log.gas_consumption_start;
+	temp = log.temp_start;
 
 	// Use the log information to determine actual profile sample size
 	// Otherwise we will get surface time at end of dive.
@@ -485,10 +425,9 @@ static int print_dive_samples_cb(struct memblock dive,
 		const unsigned char *s;
 		s = samples + offset;
 
-		// Check for event
-		if (s[0] & 0x80) {
-			switch (s[0])
-			{
+		// Check for special sample (event or a temp change for early Commanders
+		if (s[0] & 0x80 && s[0] & 0x60) {
+			switch (s[0]) {
 			case 0xC5:	// Deco obligation begins
 				deco_obligation = 1;
 				event_desc = "Deco obligation begins";
@@ -499,18 +438,22 @@ static int print_dive_samples_cb(struct memblock dive,
 				break;
 			case 0xAD:
 				deco_ceiling -= 10; // ft
-				if (offset + 3 < sample_size) {
+				event_desc = "Raise ceiling 10 ft";
+				if (config.sample_size > 1 && offset + 3 < sample_size) {
 					deco_time = (array_uint32_le(s + 3) + 1) * 60;
 					offset += 4;	// skip 4 event bytes
-					event_desc = "Raise ceiling 10 ft";
+				} else {
+					deco_time = 60;
 				}
 				break;
 			case 0xAB:
 				deco_ceiling += 10;	// ft
-				if (offset + 3 < sample_size) {
+				event_desc = "Lower ceiling 10 ft";
+				if (config.sample_size > 1 && offset + 3 < sample_size) {
 					deco_time = (array_uint32_le(s + 3) + 1) * 60;
 					offset += 4;	// skip 4 event bytes
-					event_desc = "Lower ceiling 10 ft";
+				} else {
+					deco_time = 60;
 				}
 				break;
 
@@ -603,6 +546,30 @@ static int print_dive_samples_cb(struct memblock dive,
 			continue;
 		}
 
+		if (config.sample_size == 1) {
+			// This is an early Commander
+			if (s[0] & 0x80) {
+				// Temp sample
+				int temp_change;
+				if (s[0] & 0x40)
+					temp_change = (s[0] & 0x3f) / 2;
+				else
+					temp_change = -(s[0] & 0x3f) / 2;
+				temp += temp_change;
+			} else {
+				// Depth sample
+				int depth_change;
+				if (s[0] & 0x40)
+					depth_change = -(s[0] & 0x3f) / 2;
+				else
+					depth_change = (s[0] & 0x3f) / 2;
+				depth += depth_change;
+			}
+			printf("Hex: %02x Depth: %6.2f %5.1f\n", s[0], depth, temp);
+			offset++;
+			continue;
+		}
+
 		// Depth is in every sample
 		depth_sample = (float) (s[0] & 0x3F) / 4 * (s[0] & 0x40 ? -1 : 1);
 		depth += depth_sample;
@@ -654,8 +621,8 @@ static int print_dive_samples_cb(struct memblock dive,
 			}
 		}
 
-		printf ("%02d:%02d:%02d Depth: %-5.2f, ", (sample_cnt * profile_period) / 3660,
-							((sample_cnt * profile_period) % 3660) / 60, (sample_cnt * profile_period) % 60, depth);
+		printf ("%02d:%02d:%02d Depth: %-5.2f, ", (sample_cnt * profile_interval) / 3660,
+							((sample_cnt * profile_interval) % 3660) / 60, (sample_cnt * profile_interval) % 60, depth);
 
 		if (config.type == TYPE_COMMANDER) {
 			switch (sample_cnt % 2)
@@ -797,7 +764,6 @@ static int wan_decode_dive(struct memblock dive, unsigned int dive_num, int last
 	const unsigned char *dives = (unsigned char *) clearfile->buffer;
 	const int dive_offset = ptr_uint(config.address_size, dives, dive_num - 1);
 
-fprintf(stderr, "# %d, dive_offset: %08x, size: %0x\n", dive_num, dive_offset, dive.size);
 	if (last_dive == 0) {
 		// WAN
 		// 0x43                         0x45                      0x4f
