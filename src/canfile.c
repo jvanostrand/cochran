@@ -992,22 +992,20 @@ void decode_file(struct memblock canfile, struct memblock *clearfile) {
 	* 0x3a12 - 0x5312		0x3a12 - 0x5312
 	* 0x5312 - end			0x5312 - end
 	*/
+
 	if (config.file_type == FILE_WAN) {
 		decode(o + 0x0000, o + 0x000c, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 		decode(o + 0x000c, o + 0x048e, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x048e, o + 0x1a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x1a12, o + 0x2a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x2a12, o + 0x3a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x3a12, o + 0x5312, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x5312, hend,       key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x048e, o + hend,   key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 	} else {
 		decode(o + 0x0000, o + 0x000c, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x000c, o + 0x048e, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x048e, o + 0x1a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x000c, o + 0x0a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x0a12, o + 0x1a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 		decode(o + 0x1a12, o + 0x2a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 		decode(o + 0x2a12, o + 0x3a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 		decode(o + 0x3a12, o + 0x5312, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x5312, hend,       key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x5312, o + 0x5d00, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x5d00, hend,       key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 	}
 
 	parse_header(clearfile);
