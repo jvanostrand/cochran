@@ -7,3 +7,11 @@
 #define array_uint32_be(p) (unsigned int) ( ((p)[0] << 24) + ((p)[1] << 16) + ((p)[2] << 8) + (p)[3] )
 
 #define COCHRAN_EPOCH 694242000
+
+typedef enum cochran_family_t {
+	FAMILY_GEMINI,
+	FAMILY_COMMANDER_I,
+	FAMILY_COMMANDER_II,
+	FAMILY_COMMANDER_III,
+	FAMILY_EMC,
+} cochran_family_t;

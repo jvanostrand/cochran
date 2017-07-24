@@ -11,13 +11,6 @@
 #include "cochran.h"
 #include "cochran_log.h"
 
-enum cochran_type {
-	TYPE_COMMANDER_TM,
-	TYPE_GEMINI,
-	TYPE_COMMANDER,
-	TYPE_EMC
-};
-
 enum file_type {
 	FILE_WAN,
 	FILE_CAN,
@@ -29,7 +22,7 @@ struct config {
 	unsigned int offset;		// Offset to after the list of dive pointers
 	unsigned int address_size; 	// 3 or 4 depending on the byte at .offset
 	unsigned int address_count;
-	enum cochran_type type;
+	enum cochran_family_t family;
 	unsigned int logbook_size;
 	unsigned int sample_size;
 	int decode_address[10];
@@ -145,32 +138,36 @@ static void parse_header(const struct memblock *clearfile)
 	int header_size = ptr_uint(config.address_size, clearfile->buffer, 0) - (config.offset + 0x102);
 
 	// Detect computer log version
-	switch (header[0x031])
+	switch (header[0x31])
 	{
 // TODO: Nem2a format
 // TODO: GemPNox format
+	case '0':
 	case '1':	// Cochran Commander, version I log format
 		config.logbook_size = 90;
-		config.type = TYPE_COMMANDER_TM;
+		config.family = FAMILY_COMMANDER_I;
 		config.sample_size = 1;
 		break;
 	case '2':	// Cochran Commander, version II log format
 		config.logbook_size = 256;
-		if (header[0x030] == 0x10) {
-			config.type = TYPE_GEMINI;
+		if (header[0x30] == 0x10) {
+			config.family = FAMILY_GEMINI;
 			config.sample_size = 2;	// Gemini with tank PSI samples
-		} else  {
-			config.type = TYPE_COMMANDER;
+		} else if (header[0x32] == '1') {
+			config.family = FAMILY_COMMANDER_II;
+			config.sample_size = 2;	// Commander
+		} else {
+			config.family = FAMILY_COMMANDER_III;
 			config.sample_size = 2;	// Commander
 		}
 		break;
 	case '3':	// Cochran EMC, version III log format
-		config.type = TYPE_EMC;
+		config.family = FAMILY_EMC;
 		config.logbook_size = 512;
 		config.sample_size = 3;
 		break;
 	default:
-		fprintf (stderr, "Unknown log format %02x %02x\n", header[0x30], header[0x031]);
+		fprintf (stderr, "Unknown log format %02x %02x\n", header[0x30], header[0x31]);
 		//exit(1);
 		break;
 	}
@@ -270,19 +267,20 @@ static int cochran_predive_event_bytes (unsigned char code)
 									{0x10, 20},
 									{  -1,  0} };
 
-	switch (config.type)
+	switch (config.family)
 	{
-	case TYPE_COMMANDER_TM:
+	case FAMILY_COMMANDER_I:
+	case FAMILY_COMMANDER_II:
 		// doesn't have inter-dive events;
 		break;
-	case TYPE_GEMINI:
-	case TYPE_COMMANDER:
+	case FAMILY_GEMINI:
+	case FAMILY_COMMANDER_III:
 		while (cmdr_event_bytes[x][0] != code && cmdr_event_bytes[x][0] != -1)
 			x++;
 
 		return cmdr_event_bytes[x][1];
 		break;
-	case TYPE_EMC:
+	case FAMILY_EMC:
 		while (emc_event_bytes[x][0] != code && emc_event_bytes[x][0] != -1)
 			x++;
 
@@ -294,17 +292,17 @@ static int cochran_predive_event_bytes (unsigned char code)
 
 
 void parse_log(const unsigned char *log_buf, cochran_log_t *log) {
-	switch (config.type) {
+	switch (config.family) {
 // TODO: Nemo2a format
 // TODO: GemPNox format
-	case TYPE_COMMANDER_TM:
-		cochran_log_commander_tm_parse(log_buf, log);
+	case FAMILY_COMMANDER_I:
+		cochran_log_commander_I_parse(log_buf, log);
 		break;
-	case TYPE_GEMINI:
-	case TYPE_COMMANDER:
-		cochran_log_commander_II_parse(log_buf, log);
+	case FAMILY_GEMINI:
+	case FAMILY_COMMANDER_III:
+		cochran_log_commander_III_parse(log_buf, log);
 		break;
-	case TYPE_EMC:
+	case FAMILY_EMC:
 		cochran_log_emc_parse(log_buf, log);
 		break;
 	default:
@@ -577,9 +575,9 @@ static int print_dive_samples_cb(struct memblock dive,
 		printf("      ");
 
 		if (debug) {
-			switch (config.type)
+			switch (config.family)
 			{
-			case TYPE_GEMINI:
+			case FAMILY_GEMINI:
 				switch (sample_cnt % 4)
 				{
 				case 0:
@@ -596,7 +594,7 @@ static int print_dive_samples_cb(struct memblock dive,
 					break;
 				}
 				break;
-			case TYPE_COMMANDER:
+			case FAMILY_COMMANDER_II:
 				switch (sample_cnt % 2)
 				{
 				case 0:
@@ -607,7 +605,7 @@ static int print_dive_samples_cb(struct memblock dive,
 					break;
 				}
 				break;
-			case TYPE_EMC:
+			case FAMILY_EMC:
 				switch (sample_cnt % 2)
 				{
 				case 0:
@@ -624,7 +622,7 @@ static int print_dive_samples_cb(struct memblock dive,
 		printf ("%02d:%02d:%02d Depth: %-5.2f, ", (sample_cnt * profile_interval) / 3660,
 							((sample_cnt * profile_interval) % 3660) / 60, (sample_cnt * profile_interval) % 60, depth);
 
-		if (config.type == TYPE_COMMANDER) {
+		if (config.family == FAMILY_COMMANDER_III) {
 			switch (sample_cnt % 2)
 			{
 			case 0:	// Ascent rate
@@ -636,7 +634,7 @@ static int print_dive_samples_cb(struct memblock dive,
 				printf ("  Temp: %2.1f    ", temp);
 				break;
 			}
-		} else if (config.type == TYPE_GEMINI) {
+		} else if (config.family == FAMILY_GEMINI) {
 			// Gemini with tank pressure and SAC rate.
 			switch (sample_cnt % 4)
 			{
@@ -657,7 +655,7 @@ static int print_dive_samples_cb(struct memblock dive,
 				printf ("  Temp: %2.1f    ", temp);
 				break;
 			}
-		} else if (config.type == TYPE_EMC) {
+		} else if (config.family == FAMILY_EMC) {
 			switch (sample_cnt % 2)
 			{
 			case 0:	// Ascent rate
@@ -996,7 +994,7 @@ void decode_file(struct memblock canfile, struct memblock *clearfile) {
 	if (config.file_type == FILE_WAN) {
 		decode(o + 0x0000, o + 0x000c, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 		decode(o + 0x000c, o + 0x048e, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
-		decode(o + 0x048e, o + hend,   key, 0, mod, canfile.buffer, hend, clearfile->buffer);
+		decode(o + 0x048e, hend,       key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 	} else {
 		decode(o + 0x0000, o + 0x000c, key, 0, mod, canfile.buffer, hend, clearfile->buffer);
 		decode(o + 0x000c, o + 0x0a12, key, 0, mod, canfile.buffer, hend, clearfile->buffer);

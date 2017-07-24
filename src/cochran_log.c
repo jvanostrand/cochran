@@ -5,14 +5,38 @@
 #include "cochran.h"
 #include "cochran_log.h"
 
+/*
+* FAMILY_COMMANDER_I
+*         log size: 90
+*         sample size: 1
+*         interdive: NO
+*
+* FAMILY_COMMANDER_II
+*         log size: 256
+*         sample size : 2
+*         interdive: YES
+*         broken-down time: NO
+*
+* FAMILY_COMMANDER_III
+*         log size: 256
+*         sample size: 2
+*         interdive: YES
+*         broken-down time: YES
+*
+* FAMILY_EMC
+*         log size: 512
+*         sample_size: 3
+*         broken-down time: YES
+*/
+
 
 void cochran_log_print_short_header(int ordinal) {
 	if (ordinal < 0) {
-		printf("Dive Rep YYYY/MM/DD hh:mm:ss   SIT    BT Depth Temp   NDL  Deco Int Volt Con   O2   He  Pro Pre   Pro Beg  Pro End\n");
-		printf("==== === =================== ===== ===== ===== ==== ===== ===== === ==== === ==== ==== ========  ======== ========\n");
+		printf("Dive Rep YYYY/MM/DD hh:mm:ss   SIT    BT  Depth Temp   NDL  Deco Int Volt Con   O2   He  Pro Pre  Pro Beg  Pro End\n");
+		printf("==== === =================== ===== ===== ====== ==== ===== ===== === ==== === ==== ==== ======== ======== ========\n");
 	} else {
-		printf("  # Dive Rep YYYY/MM/DD hh:mm:ss   SIT    BT Depth Temp   NDL  Deco Int Volt Con   O2   He  Pro Pre   Pro Beg  Pro End\n");
-		printf("=== ==== === =================== ===== ===== ===== ==== ===== ===== === ==== === ==== ==== ========  ======== ========\n");
+		printf("  # Dive Rep YYYY/MM/DD hh:mm:ss   SIT    BT  Depth Temp   NDL  Deco Int Volt Con   O2   He  Pro Pre  Pro Beg  Pro End\n");
+		printf("=== ==== === =================== ===== ===== ====== ==== ===== ===== === ==== === ==== ==== ======== ======== ========\n");
 	}
 }
 
@@ -25,7 +49,7 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 			log->dive_num, log->rep_dive_num,
 			log->time_start.tm_year + 1900, log->time_start.tm_mon, log->time_start.tm_mday, log->time_start.tm_hour, log->time_start.tm_min, log->time_start.tm_sec,
 			log->sit / 60, log->sit % 60, log->bt / 60, log->bt % 60,
-			log->depth_max, log->temp_min, 
+			log->depth_max, log->temp_min,
 			log->ndl_min / 60, log->ndl_min % 60, log->deco_max / 60, log->deco_max % 60,
 			log->profile_interval, log->voltage_start, log->conservatism,
 			log->mix[0].o2, log->mix[0].he,
@@ -37,7 +61,7 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 			log->dive_num, log->rep_dive_num,
 			log->time_start.tm_year + 1900, log->time_start.tm_mon, log->time_start.tm_mday, log->time_start.tm_hour, log->time_start.tm_min, log->time_start.tm_sec,
 			log->sit / 60, log->sit % 60, log->bt / 60, log->bt % 60,
-			log->depth_max, log->temp_min, 
+			log->depth_max, log->temp_min,
 			log->ndl_min / 60, log->ndl_min % 60, log->deco_max / 60, log->deco_max % 60,
 			log->profile_interval, log->voltage_start, log->conservatism,
 			log->mix[0].o2, log->mix[0].he,
@@ -46,7 +70,9 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 }
 
 
-void cochran_log_commander_tm_parse(const unsigned char *in, cochran_log_t *out) {
+void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) {
+	memset(out, 0, sizeof(cochran_log_t));
+
 	out->profile_begin			= array_uint24_le(in);
 
 	memcpy(out->tissue_start, in + 3, 12);
@@ -78,12 +104,12 @@ void cochran_log_commander_tm_parse(const unsigned char *in, cochran_log_t *out)
 	out->deco_max				= array_uint16_le(in + 57);
 
 	out->profile_interval		= in[72];
-	out->conservatism			= in[73];
+	out->conservatism			= in[73] / 2.55;
 
 	for (int i = 0; i < 3; i++)	// clear mixes
 		out->mix[i].o2 = out->mix[i].he = 0;
 
-	out->mix[0].o2			= array_uint16_le(in + 74) / 256.0;
+	out->mix[0].o2				= array_uint16_le(in + 74) / 256.0;
 
 	out->temp_avg				= in[81];
 	out->temp_min				= in[82];
@@ -94,13 +120,44 @@ void cochran_log_commander_tm_parse(const unsigned char *in, cochran_log_t *out)
 
 
 void cochran_log_commander_II_parse(const unsigned char *in, cochran_log_t *out) {
+	memset(out, 0, sizeof(cochran_log_t));
 
-	out->time_start.tm_min			= in[0];
-	out->time_start.tm_sec			= in[1];
-	out->time_start.tm_mday			= in[2];
-	out->time_start.tm_hour			= in[3];
-	out->time_start.tm_year			= (in[4] < 92 ? in[5] + 100: in[4]);
-	out->time_start.tm_mon			= in[5] - 1;
+	out->profile_begin          = array_uint32_le(in);
+	out->timestamp_start        = array_uint32_le(in + 8) + COCHRAN_EPOCH;
+	localtime_r(&out->timestamp_start, &out->time_start);
+	out->water_conductivity     = in[24];
+	out->profile_pre            = array_uint32_le(in + 28);
+	out->temp_start             = in[43];
+	out->depth_start            = array_uint16_le(in + 54) / 4.0;
+	out->dive_num               = array_uint16_le(in + 68);
+	out->altitude               = in[73] / 4.0;
+	memcpy(out->tissue_start, in + 112, 16);
+	out->profile_end            = array_uint32_le(in + 128);
+	//out->temp_end             = in[153];
+	out->bt                     = array_uint16_le(in + 166);
+	out->depth_max              = array_uint16_le(in + 168) / 4.0;
+	out->depth_avg              = array_uint16_le(in + 170) / 4.0;
+	for (unsigned int i = 0; i < 2; i++) {
+		out->mix[i].o2          = array_uint16_le(in + 210 + i * 2) / 256.0;
+		out->mix[i].he          = 0;
+	}
+	out->mix[2].o2 = out->mix[2].he = 0;
+	out->temp_min               = in[232];
+	out->temp_avg               = in[233];
+	memcpy(out->tissue_end, in + 240, 16);
+}
+
+
+
+void cochran_log_commander_III_parse(const unsigned char *in, cochran_log_t *out) {
+	memset(out, 0, sizeof(cochran_log_t));
+
+	out->time_start.tm_min		= in[0];
+	out->time_start.tm_sec		= in[1];
+	out->time_start.tm_mday		= in[2];
+	out->time_start.tm_hour		= in[3];
+	out->time_start.tm_year		= (in[4] < 92 ? in[5] + 100: in[4]);
+	out->time_start.tm_mon		= in[5] - 1;
 
 	out->profile_begin			= array_uint32_le(in + 6);
 	out->timestamp_start		= array_uint32_le(in + 10);
@@ -126,17 +183,18 @@ void cochran_log_commander_II_parse(const unsigned char *in, cochran_log_t *out)
 	out->depth_max				= array_uint16_le(in + 168) / 4.0;
 	out->depth_avg				= array_uint16_le(in + 170) / 4.0;
 	for (int i = 0; i < 2; i++) {
-		out->mix[i].o2		= array_uint16_le(in + 210 + i * 2) / 256.0;
-		out->mix[i].he		= 0;
+		out->mix[i].o2			= array_uint16_le(in + 210 + i * 2) / 256.0;
+		out->mix[i].he			= 0;
 	}
-	out->mix[2].o2			= array_uint16_le(in + 214) / 256.0;
-	out->mix[2].he			= 0;
-	out->profile_interval		= in[197];
+	out->mix[2].o2				= array_uint16_le(in + 214) / 256.0;
+	out->mix[2].he				= 0;
+	out->profile_interval		= in[237];
 	memcpy(out->tissue_end, in + 240, 16);
 }
 
 
 void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
+	memset(out, 0, sizeof(cochran_log_t));
 	out->time_start.tm_sec		= in[0];
 	out->time_start.tm_min		= in[1];
 	out->time_start.tm_hour		= in[2];
@@ -165,15 +223,15 @@ void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
 		out->mix[i].he = array_uint16_le(in + 164 + i * 2) / 256.0;
 	}
 	out->alarm_depth			= array_uint16_le(in + 184);
-	out->conservatism			= in[200];
+	out->conservatism			= in[200] / 2.55;
 	out->rep_dive_num			= in[203];
 	memcpy(out->tissue_start, in + 216, 40);
 
 	out->profile_end			= array_uint32_le(in + 256);
 	out->temp_min				= in[283];
 	out->bt						= array_uint16_le(in + 304);
-	out->depth_max				= array_uint16_le(in + 306);
-	out->depth_avg				= array_uint16_le(in + 310);
+	out->depth_max				= array_uint16_le(in + 306) / 4.0;
+	out->depth_avg				= array_uint16_le(in + 310) / 4.0;
 	out->ndl_min				= array_uint16_le(in + 312);
 	out->ndl_min_bt				= array_uint16_le(in + 314);
 	out->deco_max				= array_uint16_le(in + 316);
