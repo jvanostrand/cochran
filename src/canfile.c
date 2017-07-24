@@ -226,7 +226,7 @@ static void parse_header(const struct memblock *clearfile)
 		config.decode_address[2] = 0x1fff;
 		config.decode_address[3] = 0x2fff;
 		config.decode_address[4] = 0x48ff;
-		config.decode_address[5] = 0x491f + config.logbook_size;
+		config.decode_address[5] = 0x4914 + config.logbook_size;
 		config.decode_address[6] = -1;
 		config.decode_key_offset[0] = 1;
 		for (int i = 1; i < 10; i++)
