@@ -46,7 +46,7 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 		//printf("Dive Rep YY/MM/DD hh:mm:ss   SIT    BT Depth Temp   NDL  Deco Int Volt Con   O2   He  Pro Pre   Pro Beg  Pro End\n");
 		printf("%4d %3d %02d/%02d/%02d %02d:%02d:%02d %2dh%02d %2dh%02d %6.2f %4.1f %2dh%02d %2dh%02d %3d %4.2f %3d %4.1f %4.1f %08x %08x %08x\n",
 			log->dive_num, log->rep_dive_num,
-			log->time_start.tm_year + 1900, log->time_start.tm_mon, log->time_start.tm_mday, log->time_start.tm_hour, log->time_start.tm_min, log->time_start.tm_sec,
+			log->time_start.tm_year + 1900, log->time_start.tm_mon + 1, log->time_start.tm_mday, log->time_start.tm_hour, log->time_start.tm_min, log->time_start.tm_sec,
 			log->sit / 60, log->sit % 60, log->bt / 60, log->bt % 60,
 			log->depth_max, log->temp_min,
 			log->ndl_min / 60, log->ndl_min % 60, log->deco_max / 60, log->deco_max % 60,
@@ -58,7 +58,7 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 		printf("%3d %4d %3d %02d/%02d/%02d %02d:%02d:%02d %2dh%02d %2dh%02d %6.2f %4.1f %2dh%02d %2dh%02d %3d %4.2f %3d %4.1f %4.1f %08x %08x %08x\n",
 			ordinal,
 			log->dive_num, log->rep_dive_num,
-			log->time_start.tm_year + 1900, log->time_start.tm_mon, log->time_start.tm_mday, log->time_start.tm_hour, log->time_start.tm_min, log->time_start.tm_sec,
+			log->time_start.tm_year + 1900, log->time_start.tm_mon + 1, log->time_start.tm_mday, log->time_start.tm_hour, log->time_start.tm_min, log->time_start.tm_sec,
 			log->sit / 60, log->sit % 60, log->bt / 60, log->bt % 60,
 			log->depth_max, log->temp_min,
 			log->ndl_min / 60, log->ndl_min % 60, log->deco_max / 60, log->deco_max % 60,
