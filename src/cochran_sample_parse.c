@@ -14,8 +14,8 @@ typedef struct cochran_events_t {
 static const cochran_events_t cochran_events[] = {
     {0xA8, 1, "Entered PDI mode" },
     {0xA9, 1, "Exited PDI mode" },
-    {0xAB, 5, "Ceiling decrease" },
-    {0xAD, 5, "Ceiling increase" },
+    {0xAB, 5, "Deco ceiling lowered" },
+    {0xAD, 5, "Deco ceiling raised" },
     {0xBD, 1, "Switched to nomal PO2 setting" },
     {0xC0, 1, "Switched to FO2 21% mode" },
     {0xC1, 1, "Ascent rate greater than limit" },
@@ -162,8 +162,8 @@ void cochran_sample_parse_I (const cochran_log_t *log, const unsigned char *samp
 
 			// Issue deco sample
 			sample.type = SAMPLE_DECO;
-			sample.value.deco.time = deco_time;
-			sample.value.deco.ceiling = deco_ceiling;
+			sample.value.deco.time = deco_time; // Minutes
+			sample.value.deco.ceiling = deco_ceiling; // feet
 		} else if (s[0] & 0x80) {
 			// Temp
 			if (*s & 0x10)
@@ -237,7 +237,7 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 	double depth = log->depth_start;
 	double temp = log->temp_start;
 	unsigned int deco_ceiling = 0;
-	int deco_flag = 0;
+	int deco_time = 0;
 
 	// Issue initial depth/temp samples
 	if (callback) {
@@ -268,25 +268,15 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 			switch (*s) {
 			case 0xAB:		// Lower deco ceiling (deeper)
 				deco_ceiling += 10; // feet
-				if (offset + 4 < size) {
-					sample.value.deco.time = (array_uint16_le(s + 3) + 1); // Minutes
-					sample.value.deco.ceiling = deco_ceiling; // feet
-				}
-				offset += 4;
 				break;
 			case 0xAD:		// Raise deco ceiling (shallower)
 				deco_ceiling -= 10; // feet
-				if (offset + 4 < size) {
-					sample.value.deco.time = (array_uint16_le(s + 3) + 1); // Minutes
-					sample.value.deco.ceiling = deco_ceiling; // feet
-				}
-				offset += 4;
 				break;
 			case 0xC5:
-				deco_flag = 1;
+				deco_time = 1;
 				break;
 			case 0xC8:
-				deco_flag = 0;
+				deco_time = 0;
 				break;
 			default:
 				// Just an event, we're done here.
@@ -295,9 +285,10 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 			}
 
 			// Issue deco sample
+			sample.type = SAMPLE_DECO;
+			sample.value.deco.time = deco_time; // Minutes
+			sample.value.deco.ceiling = deco_ceiling; // feet
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
-
-			offset++;
 		} else {
 			// Parse normal sample
 			sample_cnt++;
@@ -326,9 +317,8 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 				sample.value.temp = (s[1] & 0x7f) / 2.0 + 20;
 			}
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
-
-			offset += sample_size;
 		}
+		offset += sample_size;
 	}
 }
 
@@ -427,17 +417,29 @@ void cochran_sample_parse_gem(const cochran_log_t *log, const unsigned char *sam
 			switch (*s) {
 			case 0xAB:		// Lower deco ceiling (deeper)
 				deco_ceiling += 10; // feet
-				if (offset + 4 < size) {
-					sample.value.deco.time = (array_uint16_le(s + 3) + 1); // Minutes
+				if (offset + 4 < size && callback) {
+					sample.type = SAMPLE_DECO_FIRST_STOP;
 					sample.value.deco.ceiling = deco_ceiling; // feet
+					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+					sample.type = SAMPLE_DECO;
+					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}
 				offset += 4;
 				break;
 			case 0xAD:		// Raise deco ceiling (shallower)
 				deco_ceiling -= 10; // feet
-				if (offset + 4 < size) {
-					sample.value.deco.time = (array_uint16_le(s + 3) + 1); // Minutes
+				if (offset + 4 < size && callback) {
+					sample.type = SAMPLE_DECO_FIRST_STOP;
 					sample.value.deco.ceiling = deco_ceiling; // feet
+					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+					sample.type = SAMPLE_DECO;
+					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}
 				offset += 4;
 				break;
@@ -453,8 +455,6 @@ void cochran_sample_parse_gem(const cochran_log_t *log, const unsigned char *sam
 				continue;
 			}
 
-			// Issue deco sample
-			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 			offset++;
 		} else {
 			// Parse normal sample
@@ -572,17 +572,29 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 			switch (*s) {
 			case 0xAB:		// Lower deco ceiling (deeper)
 				deco_ceiling += 10; // feet
-				if (offset + 4 < size) {
-					sample.value.deco.time = (array_uint16_le(s + 3) + 1); // Minutes
+				if (offset + 4 < size && callback) {
+					sample.type = SAMPLE_DECO_FIRST_STOP;
 					sample.value.deco.ceiling = deco_ceiling; // feet
+					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+					sample.type = SAMPLE_DECO;
+					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}
 				offset += 4;
 				break;
 			case 0xAD:		// Raise deco ceiling (shallower)
 				deco_ceiling -= 10; // feet
-				if (offset + 4 < size) {
-					sample.value.deco.time = (array_uint16_le(s + 3) + 1); // Minutes
+				if (offset + 4 < size && callback) {
+					sample.type = SAMPLE_DECO_FIRST_STOP;
 					sample.value.deco.ceiling = deco_ceiling; // feet
+					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+					sample.type = SAMPLE_DECO;
+					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}
 				offset += 4;
 				break;
@@ -598,8 +610,6 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 				continue;
 			}
 
-			// Issue deco sample
-			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 			offset++;
 		} else {
 			// Parse normal sample
