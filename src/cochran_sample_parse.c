@@ -226,9 +226,12 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 		while ( (samples[offset] & 0x80) == 0 && samples[offset] != 0x40 && offset < size) {
 			char interdive[32];
 			sample.type = SAMPLE_INTERDIVE;
+			sample.value.interdive.code = samples[offset];
+			time_t t = array_uint32_le(samples + offset + 1) + COCHRAN_EPOCH;
+			localtime_r(&t, &(sample.value.interdive.time));
 			sample.value.interdive.size = cochran_sample_parse_inter_dive(FAMILY_COMMANDER_II, samples[offset]) + 1;
-			sample.value.interdive.data = interdive;
-			memcpy(interdive, samples + offset, sample.value.interdive.size);
+			sample.value.interdive.data = interdive - 5;
+			memcpy(interdive, samples + offset + 5, sample.value.interdive.size - 5);
 			if (callback) callback(0, &sample, userdata);
 			offset += sample.value.interdive.size;
 		}

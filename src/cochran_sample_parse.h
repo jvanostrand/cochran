@@ -28,6 +28,8 @@ typedef union cochran_sample_value_t {
     } deco;
 	unsigned char tissues[20];
 	struct {
+		unsigned char code;
+		struct tm time;
 		const unsigned char *data;
 		unsigned int size;
 	} interdive;

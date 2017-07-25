@@ -393,7 +393,11 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 		putchar('\n');
 		break;
 	case SAMPLE_INTERDIVE:
-		printf("       Interdive:");
+		printf("       Interdive: Code: %02x  Date: %04d/%02d/%02d %02d:%02d:%02d  Data:", 
+			sample->value.interdive.code,
+			sample->value.interdive.time.tm_year + 1900, sample->value.interdive.time.tm_mon + 1,
+			sample->value.interdive.time.tm_mday, sample->value.interdive.time.tm_hour,
+			sample->value.interdive.time.tm_min, sample->value.interdive.time.tm_sec);
 		for (int i = 0; i < sample->value.interdive.size; i++) {
 			printf(" %02x", (unsigned char ) sample->value.interdive.data[i]);
 		}
