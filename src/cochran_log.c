@@ -65,11 +65,11 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 			log->profile_interval, log->voltage_start, log->conservatism,
 			log->mix[0].o2, log->mix[0].he,
 			log->profile_pre, log->profile_begin, log->profile_end);
-		printf("start depth: %5.2f, start_temp: %5.2f\n", log->depth_start, log->temp_start);
 	}
 }
 
 
+// Early commander parser
 void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) {
 	memset(out, 0, sizeof(cochran_log_t));
 
@@ -83,7 +83,7 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) 
 	out->rep_dive_num			= in[19];
 	out->dive_num				= array_uint16_le(in + 20);
 	out->sit					= array_uint16_le(in + 24);
-	out->voltage_start			= array_uint16_le(in + 28) / 256;
+	out->voltage_start			= array_uint16_le(in + 30) / 256.0;
 
  	memcpy(out->tissue_end, in + 35, 12);
 
@@ -119,6 +119,7 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) 
 }
 
 
+// Pre-21000 parser
 void cochran_log_commander_II_parse(const unsigned char *in, cochran_log_t *out) {
 	memset(out, 0, sizeof(cochran_log_t));
 
@@ -148,6 +149,7 @@ void cochran_log_commander_II_parse(const unsigned char *in, cochran_log_t *out)
 }
 
 
+// Post-21000 parser
 void cochran_log_commander_III_parse(const unsigned char *in, cochran_log_t *out) {
 	memset(out, 0, sizeof(cochran_log_t));
 
@@ -246,4 +248,44 @@ void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
 	out->deco_actual			= array_uint16_le(in + 432);
 	out->profile_interval		= in[435];
 	memcpy(out->tissue_end, in + 216, 40);
+}
+
+
+/*
+ * cochran_log_type
+ *
+ * Determine the log parse function for the given model.
+ */
+cochran_log_parser_t cochran_log_get_parser(const unsigned char *model) {
+
+	struct parser_table {
+		const char *model;
+		cochran_log_parser_t parser;
+		const char *description;
+	};
+
+	struct parser_table parser[] = {
+		{ "017", cochran_log_commander_I_parse, 	"Early Commander" },
+		{ "102", cochran_log_commander_I_parse,		"Early Gemini" },
+		{ "120", cochran_log_commander_I_parse,		"Early Commander" },
+		{ "124", cochran_log_commander_I_parse,		"Nemo" },
+		{ "140", cochran_log_commander_I_parse,		"AquaNox" },
+		{ "213", cochran_log_commander_II_parse,	"Pre-21000 Commander" },
+		{ "215", cochran_log_commander_III_parse,	"Gemini" },
+		{ "216", cochran_log_commander_III_parse,	"Gemini" },
+		{ "221", cochran_log_commander_III_parse,	"Commander" },
+		{ "300", cochran_log_emc_parse,				"EMC" },
+		{ "301", cochran_log_emc_parse,				"EMC" },
+		{ "315", cochran_log_emc_parse,				"EMC" },
+	};
+
+	int parser_cnt;
+	parser_cnt = sizeof(parser) / sizeof(struct parser_table);
+
+	for (int i = 0; i < parser_cnt; i++ )
+		if (!strncmp(model, parser[i].model, 3)) {
+			return parser[i].parser;
+	}
+
+	return NULL;
 }

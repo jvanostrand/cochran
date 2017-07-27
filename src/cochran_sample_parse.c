@@ -51,6 +51,10 @@ static const cochran_events_t cochran_events[] = {
 static int cochran_sample_parse_inter_dive (cochran_family_t family, unsigned char code) {
 	int x = 0;
 
+	int gem_event_bytes[15][2] = {  {0x00, 10}, {0x02, 17}, {0x06, 18},
+									{0x07, 18}, {0x08, 18}, {0x09, 18},
+									{0x0a, 18}, {0x0c, 18}, {0x0e, 18},
+									{  -1,  0} };
 	int cmdr_event_bytes[15][2] = {	{0x00, 16}, {0x01, 20}, {0x02, 17},
 									{0x03, 16}, {0x06, 18}, {0x07, 18},
 									{0x08, 18}, {0x09, 18}, {0x0a, 18},
@@ -68,6 +72,10 @@ static int cochran_sample_parse_inter_dive (cochran_family_t family, unsigned ch
 		// doesn't have inter-dive events;
 		break;
 	case FAMILY_GEMINI:
+		while (gem_event_bytes[x][0] != code && gem_event_bytes[x][0] != -1)
+			x++;
+		return gem_event_bytes[x][1];
+		break;
 	case FAMILY_COMMANDER_II:
 	case FAMILY_COMMANDER_III:
 		while (cmdr_event_bytes[x][0] != code && cmdr_event_bytes[x][0] != -1)
@@ -109,21 +117,27 @@ void cochran_sample_parse_I (const cochran_log_t *log, const unsigned char *samp
 	unsigned int sample_cnt = 0;
 	cochran_sample_t sample = {0};
 
-	double temp = samples[offset++] / 2.0;
-	double depth = samples[offset++] / 2.0;
+	double temp = samples[0] / 2.0;
+	double depth = samples[1] / 2.0;
 	unsigned int deco_ceiling = 0;
 	unsigned int deco_time = 0;
 
 	// Issue initial depth/temp samples
 	if (callback) {
-		sample.type = SAMPLE_DEPTH;
-		sample.value.depth = depth;
-		callback(0, &sample, userdata);
-
 		sample.type = SAMPLE_TEMP;
 		sample.value.temp = temp;
+		sample.raw.data = samples;
+		sample.raw.size = 1;
+		callback(0, &sample, userdata);
+
+		sample.type = SAMPLE_DEPTH;
+		sample.value.depth = depth;
+		sample.raw.data = samples + 1;
+		sample.raw.size = 1;
 		callback(0, &sample, userdata);
 	}
+
+	offset = 2;
 
 	while (offset < size) {
 		const unsigned char *s = samples + offset;
@@ -139,6 +153,8 @@ void cochran_sample_parse_I (const cochran_log_t *log, const unsigned char *samp
 			// Issue event sample
 			sample.type = SAMPLE_EVENT;
 			sample.value.event = cochran_events[e].description;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 			switch (*s) {
@@ -164,6 +180,8 @@ void cochran_sample_parse_I (const cochran_log_t *log, const unsigned char *samp
 			sample.type = SAMPLE_DECO;
 			sample.value.deco.time = deco_time; // Minutes
 			sample.value.deco.ceiling = deco_ceiling; // feet
+			sample.raw.data = 0;
+			sample.raw.size = 0;
 		} else if (s[0] & 0x80) {
 			// Temp
 			if (*s & 0x10)
@@ -172,6 +190,8 @@ void cochran_sample_parse_I (const cochran_log_t *log, const unsigned char *samp
 				temp += (*s & 0x0f) / 2.0;
 			sample.type = SAMPLE_TEMP;
 			sample.value.temp = temp;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 		} else {
 			// Depth
 			if (*s & 0x40)
@@ -181,6 +201,8 @@ void cochran_sample_parse_I (const cochran_log_t *log, const unsigned char *samp
 			sample_cnt++;
 			sample.type = SAMPLE_DEPTH;
 			sample.value.temp = depth;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 		}
 
 		if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
@@ -222,18 +244,22 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 	cochran_sample_t sample = {0};
 
 	// process inter-dive event
-	if (samples[offset] != 0x40) {
-		while ( (samples[offset] & 0x80) == 0 && samples[offset] != 0x40 && offset < size) {
-			char interdive[32];
+	//if (samples[offset] != 0x40) {
+	if (cochran_sample_parse_inter_dive(FAMILY_COMMANDER_II, samples[offset])) {
+		while ( offset < size && (samples[offset] & 0x80) == 0 && samples[offset] != 0x40) {
+			int event_size = 0;
 			sample.type = SAMPLE_INTERDIVE;
 			sample.value.interdive.code = samples[offset];
-			time_t t = array_uint32_le(samples + offset + 1) + COCHRAN_EPOCH;
-			localtime_r(&t, &(sample.value.interdive.time));
-			sample.value.interdive.size = cochran_sample_parse_inter_dive(FAMILY_COMMANDER_II, samples[offset]) + 1;
-			sample.value.interdive.data = interdive - 5;
-			memcpy(interdive, samples + offset + 5, sample.value.interdive.size - 5);
-			if (callback) callback(0, &sample, userdata);
-			offset += sample.value.interdive.size;
+			sample.value.interdive.data = 0;
+			event_size = cochran_sample_parse_inter_dive(FAMILY_COMMANDER_II, samples[offset]) + 1;
+			if (offset + event_size < size && event_size > 5) {
+				time_t t = array_uint32_le(samples + offset + 1) + COCHRAN_EPOCH;
+				localtime_r(&t, &(sample.value.interdive.time));
+				sample.value.interdive.size = event_size - 5;
+				sample.value.interdive.data = samples + offset + 5;
+				if (callback) callback(0, &sample, userdata);
+			}
+			offset += event_size;
 		}
 	}
 
@@ -266,14 +292,46 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 			// Issue event sample
 			sample.type = SAMPLE_EVENT;
 			sample.value.event = cochran_events[e].description;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 			switch (*s) {
 			case 0xAB:		// Lower deco ceiling (deeper)
 				deco_ceiling += 10; // feet
+				if (offset + 4 < size && callback) {
+					sample.type = SAMPLE_DECO_FIRST_STOP;
+					sample.value.deco.ceiling = deco_ceiling; // feet
+					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					sample.raw.data = s + 1;
+					sample.raw.size = 2;
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+					sample.type = SAMPLE_DECO;
+					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					sample.raw.data = s + 3;
+					sample.raw.size = 2;
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+				}
+				offset += 4;
 				break;
 			case 0xAD:		// Raise deco ceiling (shallower)
 				deco_ceiling -= 10; // feet
+				if (offset + 4 < size && callback) {
+					sample.type = SAMPLE_DECO_FIRST_STOP;
+					sample.value.deco.ceiling = deco_ceiling; // feet
+					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					sample.raw.data = s + 1;
+					sample.raw.size = 2;
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+					sample.type = SAMPLE_DECO;
+					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					sample.raw.data = s + 3;
+					sample.raw.size = 2;
+					callback(sample_cnt * log->profile_interval, &sample, userdata);
+				}
+				offset += 4;
 				break;
 			case 0xC5:
 				deco_time = 1;
@@ -286,12 +344,7 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 				offset++;
 				continue;
 			}
-
-			// Issue deco sample
-			sample.type = SAMPLE_DECO;
-			sample.value.deco.time = deco_time; // Minutes
-			sample.value.deco.ceiling = deco_ceiling; // feet
-			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+			offset++;
 		} else {
 			// Parse normal sample
 			sample_cnt++;
@@ -301,24 +354,27 @@ void cochran_sample_parse_II(const cochran_log_t *log, const unsigned char *samp
 			else
 				depth += (*s & 0x3f) / 4.0;
 
-
 			sample.type = SAMPLE_DEPTH;
 			sample.value.depth = depth;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 			// Parse second byte
 			if (((sample_cnt - 1) % 2) == 0) {
+				// Temp sample
+				sample.type = SAMPLE_TEMP;
+				sample.value.temp = (s[1] & 0x7f) / 2.0 + 20;
+			} else {
 				// Ascent sample
 				sample.type = SAMPLE_ASCENT_RATE;
 				if (s[1] & 0x80)
 					sample.value.ascent_rate = (s[1] & 0x7f) / 4.0;
 				else
 					sample.value.ascent_rate = -(s[1] & 0x7f) / 4.0;
-			} else {
-				// Temp sample
-				sample.type = SAMPLE_TEMP;
-				sample.value.temp = (s[1] & 0x7f) / 2.0 + 20;
 			}
+			sample.raw.data = (s + 1);
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 		}
 		offset += sample_size;
@@ -369,14 +425,20 @@ void cochran_sample_parse_gem(const cochran_log_t *log, const unsigned char *sam
 
 	// process inter-dive event
 	if (samples[offset] != 0x40) {
-		while ( (samples[offset] & 0x80) == 0 && samples[offset] != 0x40 && offset < size) {
-			char interdive[32];
+		while ( offset < size && (samples[offset] & 0x80) == 0 && samples[offset] != 0x40) {
+			int event_size = 0;
 			sample.type = SAMPLE_INTERDIVE;
-			sample.value.interdive.size = cochran_sample_parse_inter_dive(FAMILY_GEMINI, samples[offset]) + 1;
-			sample.value.interdive.data = interdive;
-			memcpy(interdive, samples + offset, sample.value.interdive.size);
-			if (callback) callback(0, &sample, userdata);
-			offset += sample.value.interdive.size;
+			sample.value.interdive.code = samples[offset];
+			sample.value.interdive.data = 0;
+			event_size = cochran_sample_parse_inter_dive(FAMILY_COMMANDER_II, samples[offset]) + 1;
+			if (offset + event_size < size && event_size > 5) {
+				time_t t = array_uint32_le(samples + offset + 1) + COCHRAN_EPOCH;
+				localtime_r(&t, &(sample.value.interdive.time));
+				sample.value.interdive.size = event_size - 5;
+				sample.value.interdive.data = samples + offset + 5;
+				if (callback) callback(0, &sample, userdata);
+			}
+			offset += event_size;
 		}
 	}
 
@@ -528,15 +590,22 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 
 	// process inter-dive event
 	if (samples[offset] != 0x40) {
-		while ( (samples[offset] & 0x80) == 0 && samples[offset] != 0x40 && offset < size) {
-			char interdive[32];
+		while ( offset < size && (samples[offset] & 0x80) == 0 && samples[offset] != 0x40) {
+			int event_size = 0;
 			sample.type = SAMPLE_INTERDIVE;
-			sample.value.interdive.size = cochran_sample_parse_inter_dive(FAMILY_EMC, samples[offset]) + 1;
-			sample.value.interdive.data = interdive;
-			memcpy(interdive, samples + offset, sample.value.interdive.size);
-			if (callback)
-				callback(0, &sample, userdata);
-			offset += sample.value.interdive.size;
+			sample.value.interdive.code = samples[offset];
+			sample.value.interdive.data = 0;
+			event_size = cochran_sample_parse_inter_dive(FAMILY_EMC, samples[offset]) + 1;
+			if (offset + event_size < size && event_size > 5) {
+				time_t t = array_uint32_le(samples + offset + 1) + COCHRAN_EPOCH;
+				localtime_r(&t, &(sample.value.interdive.time));
+				sample.value.interdive.size = event_size - 5;
+				sample.value.interdive.data = samples + offset + 5;
+				sample.raw.data = samples + offset;
+				sample.raw.size = event_size;
+				if (callback) callback(0, &sample, userdata);
+			}
+			offset += event_size;
 		}
 	}
 
@@ -549,10 +618,14 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 	if (callback) {
 		sample.type = SAMPLE_DEPTH;
 		sample.value.depth = depth;
+		sample.raw.data = 0;
+		sample.raw.size = 0;
 		callback(0, &sample, userdata);
 
 		sample.type = SAMPLE_TEMP;
 		sample.value.temp = temp;
+		sample.raw.data = 0;
+		sample.raw.size = 0;
 		callback(0, &sample, userdata);
 	}
 
@@ -570,6 +643,8 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 			// Issue event sample
 			sample.type = SAMPLE_EVENT;
 			sample.value.event = cochran_events[e].description;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 			switch (*s) {
@@ -579,10 +654,14 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 					sample.type = SAMPLE_DECO_FIRST_STOP;
 					sample.value.deco.ceiling = deco_ceiling; // feet
 					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					sample.raw.data = s + 1;
+					sample.raw.size = 2;
 					callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 					sample.type = SAMPLE_DECO;
 					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					sample.raw.data = s + 3;
+					sample.raw.size = 2;
 					callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}
 				offset += 4;
@@ -593,10 +672,14 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 					sample.type = SAMPLE_DECO_FIRST_STOP;
 					sample.value.deco.ceiling = deco_ceiling; // feet
 					sample.value.deco.time = array_uint16_le(s + 1) + 1; // Minutes
+					sample.raw.data = s + 1;
+					sample.raw.size = 2;
 					callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 					sample.type = SAMPLE_DECO;
 					sample.value.deco.time = array_uint16_le(s + 3) + 1; // Minutes
+					sample.raw.data = s + 3;
+					sample.raw.size = 2;
 					callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}
 				offset += 4;
@@ -626,6 +709,8 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 
 			sample.type = SAMPLE_DEPTH;
 			sample.value.depth = depth;
+			sample.raw.data = s;
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 			// Parse second byte
@@ -644,26 +729,36 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 				sample.value.temp = (s[1] & 0x7f) / 2.0 + 20;
 				break;
 			}
+			sample.raw.data = s + 1;
+			sample.raw.size = 1;
 			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
 
 			// Parse third byte samples, NDL and deco information
+			unsigned char temp_sample[4];
 			switch ((sample_cnt - 1) % 24) {
 			case 19:
-					// Tissue samples
-					sample.type = SAMPLE_TISSUES;
-					for (int i = 0; i < 20; i++)
-						sample.value.tissues[i] = *(s + 2 - (19 - i) * sample_size);
-					if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+				// Tissue samples
+				sample.type = SAMPLE_TISSUES;
+				for (int i = 0; i < 20; i++)
+					sample.value.tissues[i] = *(s + 2 - (19 - i) * sample_size);
+				sample.raw.data = sample.value.tissues;
+				sample.raw.size = 20;
+				if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+				break;
 			case 20:
+				temp_sample[0] = s[2];
+				temp_sample[1] = s[5];
+				sample.raw.data = temp_sample;
+				sample.raw.size = 2;
 				if (deco_flag) {
 					// Deepest stop time
 					sample.type = SAMPLE_DECO_FIRST_STOP;
-					sample.value.deco.time = (s[2] + (s[5] << 8) + 1); // minutes
+					sample.value.deco.time = array_uint16_le(temp_sample) + 1; // minutes
 					sample.value.deco.ceiling = deco_ceiling;
 				} else {
 					// NDL
 					sample.type = SAMPLE_NDL;
-					sample.value.ndl = (s[2] + (s[5] << 8) + 1); // minutes
+					sample.value.ndl = array_uint16_le(temp_sample) + 1; // minutes
 				}
 				if (callback)
 					callback(sample_cnt * log->profile_interval, &sample, userdata);
@@ -672,7 +767,11 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 				if (deco_flag) {
 					// Total stop time
 					sample.type = SAMPLE_DECO;
-					sample.value.deco.time = (s[2] + (s[5] << 8) + 1); // minutes
+					temp_sample[0] = s[2];
+					temp_sample[1] = s[5];
+					sample.value.deco.time = array_uint16_le(temp_sample) + 1; // minutes
+					sample.raw.data = temp_sample;
+					sample.raw.size = 2;
 					if (callback)
 						callback(sample_cnt * log->profile_interval, &sample, userdata);
 				}

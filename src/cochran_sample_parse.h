@@ -1,5 +1,6 @@
 
 typedef enum cochran_sample_type_t {
+	SAMPLE_UNDEFINED,
 	SAMPLE_DEPTH,
 	SAMPLE_TEMP,
 	SAMPLE_ASCENT_RATE,
@@ -40,6 +41,10 @@ typedef union cochran_sample_value_t {
 typedef struct cochran_sample_t {
 	cochran_sample_type_t type;
 	cochran_sample_value_t value;
+	struct {
+		unsigned int size;
+		const unsigned char *data;
+	} raw;
 } cochran_sample_t;
 
 

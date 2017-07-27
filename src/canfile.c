@@ -19,6 +19,7 @@ enum file_type {
 
 struct config {
 	enum file_type file_type;
+	unsigned char model[4];
 	unsigned char file_format;
 	unsigned int offset;		// Offset to after the list of dive pointers
 	unsigned int address_size; 	// 3 or 4 depending on the byte at .offset
@@ -138,6 +139,9 @@ static void parse_header(const struct memblock *clearfile)
 	const unsigned char *header = clearfile->buffer + config.offset + 0x102;
 	int header_size = ptr_uint(config.address_size, clearfile->buffer, 0) - (config.offset + 0x102);
 
+	strncpy(config.model, header + 0x31, 3);
+	config.model[3] = 0;
+
 	// Detect computer log version
 	switch (header[0x31])
 	{
@@ -253,6 +257,7 @@ static void parse_header(const struct memblock *clearfile)
 
 
 void parse_log(const unsigned char *log_buf, cochran_log_t *log) {
+/*
 	switch (config.family) {
 // TODO: Nemo2a format
 // TODO: GemPNox format
@@ -273,6 +278,13 @@ void parse_log(const unsigned char *log_buf, cochran_log_t *log) {
 		fputs("Invalid conig.type", stderr);
 		break;
 	}
+*/
+
+	cochran_log_parser_t parser;
+
+	parser = cochran_log_get_parser(config.model);
+
+	if (parser) parser(log_buf, log);
 }
 
 
@@ -314,32 +326,48 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 	static int last_time = -1;
 	static float depth = 0, temp = 0, tank_pressure = 0, gas_consumption_rate = 0;
 	static float ascent_rate = 0;
-	static int event_flag = 0;
+	static cochran_sample_type_t last_type = SAMPLE_UNDEFINED;
+	static unsigned char raw_data[32];
+	static unsigned int raw_size = 0;
+
+	if (!sample && last_time == -1)	// Nothing to do
+		return 0;
+
+	// Do we need to print out a sample line?
+	if (last_time != -1) {
+		if (!sample 								// Direct call to cleanup
+			|| last_time != time	// Normal time change
+				// On a special event if the previous event wasn't also an special event
+			|| ((sample->type == SAMPLE_EVENT || sample->type == SAMPLE_INTERDIVE
+				|| sample->type == SAMPLE_DECO || sample->type == SAMPLE_DECO_FIRST_STOP
+				|| sample->type == SAMPLE_NDL  || sample->type == SAMPLE_TISSUES)
+				&& (last_type != SAMPLE_EVENT && last_type != SAMPLE_INTERDIVE
+				&& last_type != SAMPLE_DECO && last_type != SAMPLE_DECO_FIRST_STOP
+				&& sample->type != SAMPLE_NDL  && sample->type != SAMPLE_TISSUES))) {
+
+			// Print sample line
+			printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m  [",
+				last_time / 60, last_time % 60,
+				depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
+			// ... and raw data too
+			for (int i = 0; i < raw_size; i++) printf(" %02x", raw_data[i]);
+			printf(" ]\n");
+			raw_size = 0;
+		}
+	}
 
 	if (!sample) {
-		// Flush output
-		printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-			last_time / 60, last_time % 60,
-			depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
 		// Reset and leave
 		last_time = -1;
+		last_type = SAMPLE_UNDEFINED;
 		depth = temp = tank_pressure = gas_consumption_rate = 0;
 		ascent_rate = 0;
-		event_flag = 0;
+		raw_size = 0;
 		return 0;
 	}
 
-	if (last_time != time && sample->type != SAMPLE_EVENT && sample->type != SAMPLE_INTERDIVE) {
-		if (last_time != -1) {
-			// print last line
-			printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-				last_time / 60, last_time % 60,
-				depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
-		}
-		last_time = time;
-	}
-
-	if (sample->type != SAMPLE_EVENT) event_flag = 0;
+	// Collect raw samples
+	for (int i = 0;  i < sample->raw.size; i++) raw_data[raw_size++] = sample->raw.data[i];
 
 	switch (sample->type) {
 	case SAMPLE_DEPTH:
@@ -349,12 +377,10 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 		temp = sample->value.temp;
 		break;
 	case SAMPLE_EVENT:
-		if (!event_flag)
-			printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-				time / 60, time % 60,
-				depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
-		printf("       %s\n", sample->value.event);
-		event_flag = 1;
+		printf("       %s  [", sample->value.event);
+		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		printf(" ]\n");
+		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_ASCENT_RATE:
 		ascent_rate = sample->value.ascent_rate;
@@ -366,31 +392,29 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 		gas_consumption_rate = sample->value.gas_consumption_rate;
 		break;
 	case SAMPLE_DECO:
-		printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-			time / 60, time % 60,
-			depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
-		printf("       Deco: Ceiling: %dft %d min total\n", sample->value.deco.ceiling, sample->value.deco.time);
+		printf("       Deco: Ceiling: %dft %d min total  [", sample->value.deco.ceiling, sample->value.deco.time);
+		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		printf(" ]\n");
+		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_DECO_FIRST_STOP:
-		printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-			time / 60, time % 60,
-			depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
-		printf("       Deco: Ceiling: %dft %d min first stop\n", sample->value.deco.ceiling, sample->value.deco.time);
+		printf("       Deco: Ceiling: %dft %d min first stop  [", sample->value.deco.ceiling, sample->value.deco.time);
+		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		printf(" ]\n");
+		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_NDL:
-		printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-			time / 60, time % 60,
-			depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
-		printf("       NDL: %d\n", sample->value.ndl);
+		printf("       NDL: %d [", sample->value.ndl);
+		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		printf(" ]\n");
+		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_TISSUES:
-		printf("%3dm%02d %6.2fft %4.1fF %6.2ff/m %6.1fpsi %4.1fpsi/m\n",
-			time / 60, time % 60,
-			depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
 		printf("       Tissues:");
 		for (int i = 0; i < 20; i++)
 			printf(" %02x", sample->value.tissues[i]);
 		putchar('\n');
+		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_INTERDIVE:
 		printf("       Interdive: Code: %02x  Date: %04d/%02d/%02d %02d:%02d:%02d  Data:", 
@@ -402,8 +426,11 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 			printf(" %02x", (unsigned char ) sample->value.interdive.data[i]);
 		}
 		putchar('\n');
+		raw_size -= sample->raw.size;	// roll-back
 	}
 
+	last_time = time;
+	last_type = sample->type;
 	return 0;
 }
 
@@ -416,7 +443,9 @@ static int print_dive_samples_cb(struct memblock dive, unsigned dive_num, int la
 	const unsigned char *log_buf =  dive.buffer + config.log_offset;
 	const unsigned char *samples = dive.buffer + config.profile_offset;
 	cochran_log_t log;
-	unsigned int samples_size;
+	unsigned int samples_size = 0;
+
+	if (dive.size < config.profile_offset) return 0;
 
 	parse_log(log_buf, &log);
 
@@ -425,7 +454,10 @@ static int print_dive_samples_cb(struct memblock dive, unsigned dive_num, int la
 		// Corrupt dive end log
 		samples_size = dive.size - config.profile_offset;
 	} else {
-		samples_size = log.profile_end - log.profile_pre;
+		if (dive.size - config.profile_offset < log.profile_end - log.profile_pre) 
+			samples_size = dive.size - config.profile_offset;
+		else
+			samples_size = log.profile_end - log.profile_pre;
 	}
 
 	puts("\n");
@@ -455,7 +487,7 @@ static int dump_log_cb(struct memblock dive, unsigned int dive_num, int last_div
 	return 0;
 }
 
-	
+
 
 static int decode_dive(struct memblock dive, unsigned int dive_num, int last_dive, void *userdata) {
 	struct memblock *clearfile = (struct memblock *) userdata;
@@ -530,6 +562,8 @@ static int foreach_dive(const struct memblock clearfile, cf_callback_t callback,
 			break;
 
 		dive.size = dive_end - ptr_uint(config.address_size, dives, i);
+//printf("dive start: %08x, dive end: %08x, dive size; %08x\n",
+//		ptr_uint(config.address_size, dives, i), dive_end, dive.size);
 		dive.buffer = malloc(dive.size);
 		if (!dive.buffer) {
 			fputs("Unable to allocate dive.buffer space.\n", stderr);
