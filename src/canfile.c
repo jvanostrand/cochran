@@ -19,7 +19,7 @@ enum file_type {
 
 struct config {
 	enum file_type file_type;
-	unsigned char model[4];
+	char model[4];
 	unsigned char file_format;
 	unsigned int offset;		// Offset to after the list of dive pointers
 	unsigned int address_size; 	// 3 or 4 depending on the byte at .offset
@@ -251,7 +251,7 @@ static void parse_header(const struct memblock *clearfile)
 
 	if (debug) {
 		fputs("Header\n======\n\n", stderr);
-		cochran_debug_write(header, header_size);
+		cochran_debug_write((const unsigned char *)header, header_size);
 	}
 }
 
@@ -350,7 +350,7 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 				last_time / 60, last_time % 60,
 				depth, temp, ascent_rate, tank_pressure, gas_consumption_rate);
 			// ... and raw data too
-			for (int i = 0; i < raw_size; i++) printf(" %02x", raw_data[i]);
+			for (unsigned int i = 0; i < raw_size; i++) printf(" %02x", raw_data[i]);
 			printf(" ]\n");
 			raw_size = 0;
 		}
@@ -367,7 +367,7 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 	}
 
 	// Collect raw samples
-	for (int i = 0;  i < sample->raw.size; i++) raw_data[raw_size++] = sample->raw.data[i];
+	for (unsigned int i = 0;  i < sample->raw.size; i++) raw_data[raw_size++] = sample->raw.data[i];
 
 	switch (sample->type) {
 	case SAMPLE_DEPTH:
@@ -378,7 +378,7 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 		break;
 	case SAMPLE_EVENT:
 		printf("       %s  [", sample->value.event);
-		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		for (unsigned int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
 		printf(" ]\n");
 		raw_size -= sample->raw.size;	// roll-back
 		break;
@@ -393,19 +393,19 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 		break;
 	case SAMPLE_DECO:
 		printf("       Deco: Ceiling: %dft %d min total  [", sample->value.deco.ceiling, sample->value.deco.time);
-		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		for (unsigned int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
 		printf(" ]\n");
 		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_DECO_FIRST_STOP:
 		printf("       Deco: Ceiling: %dft %d min first stop  [", sample->value.deco.ceiling, sample->value.deco.time);
-		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		for (unsigned int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
 		printf(" ]\n");
 		raw_size -= sample->raw.size;	// roll-back
 		break;
 	case SAMPLE_NDL:
 		printf("       NDL: %d [", sample->value.ndl);
-		for (int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
+		for (unsigned int i = 0; i < sample->raw.size; i++) printf(" %02x", sample->raw.data[i]);
 		printf(" ]\n");
 		raw_size -= sample->raw.size;	// roll-back
 		break;
@@ -422,11 +422,15 @@ static int cochran_sample_parse_cb(int time, cochran_sample_t *sample, void *use
 			sample->value.interdive.time.tm_year + 1900, sample->value.interdive.time.tm_mon + 1,
 			sample->value.interdive.time.tm_mday, sample->value.interdive.time.tm_hour,
 			sample->value.interdive.time.tm_min, sample->value.interdive.time.tm_sec);
-		for (int i = 0; i < sample->value.interdive.size; i++) {
+		for (unsigned int i = 0; i < sample->value.interdive.size; i++) {
 			printf(" %02x", (unsigned char ) sample->value.interdive.data[i]);
 		}
 		putchar('\n');
 		raw_size -= sample->raw.size;	// roll-back
+		break;
+	case SAMPLE_UNDEFINED:
+		// do nothing.
+		break;
 	}
 
 	last_time = time;
@@ -682,7 +686,7 @@ void decode_file(struct memblock canfile, struct memblock *clearfile) {
 	foreach_dive(canfile, decode_dive, (void *) clearfile);
 
 	// Erase the key, since we are decoded
-	for (int x = config.offset + 0x01 ; x < config.offset + 0x101; x++)
+	for (unsigned int x = config.offset + 0x01 ; x < config.offset + 0x101; x++)
 		clearfile->buffer[x] = 0;
 
 	clearfile->size = canfile.size;
