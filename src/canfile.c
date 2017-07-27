@@ -256,38 +256,6 @@ static void parse_header(const struct memblock *clearfile)
 }
 
 
-void parse_log(const unsigned char *log_buf, cochran_log_t *log) {
-/*
-	switch (config.family) {
-// TODO: Nemo2a format
-// TODO: GemPNox format
-	case FAMILY_COMMANDER_I:
-		cochran_log_commander_I_parse(log_buf, log);
-		break;
-	case FAMILY_GEMINI:
-	case FAMILY_COMMANDER_II:
-		cochran_log_commander_II_parse(log_buf, log);
-		break;
-	case FAMILY_COMMANDER_III:
-		cochran_log_commander_III_parse(log_buf, log);
-		break;
-	case FAMILY_EMC:
-		cochran_log_emc_parse(log_buf, log);
-		break;
-	default:
-		fputs("Invalid conig.type", stderr);
-		break;
-	}
-*/
-
-	cochran_log_parser_t parser;
-
-	parser = cochran_log_get_parser(config.model);
-
-	if (parser) parser(log_buf, log);
-}
-
-
 // Print dive heading
 static int print_dive_summary(struct memblock dive, unsigned int dive_num, int last_dive, void *userdata)
 {
@@ -297,7 +265,7 @@ static int print_dive_summary(struct memblock dive, unsigned int dive_num, int l
 		return(0);
 
 	cochran_log_t log;
-	parse_log(log_buf, &log);
+	cochran_log_parse(config.model, log_buf, &log);
 
 	cochran_log_print_short(&log, dive_num);
 
@@ -451,7 +419,7 @@ static int print_dive_samples_cb(struct memblock dive, unsigned dive_num, int la
 
 	if (dive.size < config.profile_offset) return 0;
 
-	parse_log(log_buf, &log);
+	cochran_log_parse(config.model, log_buf, &log);
 
 	// Calculate size
 	if (log.profile_end == 0xFFFFFFFF || log.profile_end == 0 || log.profile_end < log.profile_pre) {
@@ -467,7 +435,7 @@ static int print_dive_samples_cb(struct memblock dive, unsigned dive_num, int la
 	puts("\n");
 	cochran_log_print_short_header(0);
 	print_dive_summary(dive, dive_num, last_dive, userdata);
-	cochran_sample_parse(config.family, &log, samples, samples_size, cochran_sample_parse_cb, 0);
+	cochran_sample_parse(config.model, &log, samples, samples_size, cochran_sample_parse_cb, 0);
 	cochran_sample_parse_cb(-1, NULL, userdata);	// Force an end
 
 	return 0;

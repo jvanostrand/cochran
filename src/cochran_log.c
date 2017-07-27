@@ -289,3 +289,18 @@ cochran_log_parser_t cochran_log_get_parser(const unsigned char *model) {
 
 	return NULL;
 }
+
+
+/*
+ * Determine parser to use and parse log
+ */
+int cochran_log_parse(const unsigned char *model, const unsigned char *in, cochran_log_t *out) {
+	cochran_log_parser_t parser = cochran_log_get_parser(model);
+
+	if (!parser)
+		return 1;
+
+	parser(in, out);
+
+	return 0;
+}

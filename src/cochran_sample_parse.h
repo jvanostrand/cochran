@@ -51,6 +51,7 @@ typedef struct cochran_sample_t {
 
 // Sample parse callback
 typedef int (*cochran_sample_callback_t) (int time, cochran_sample_t *sample, void *userdata);
+typedef void (*cochran_sample_parser_t) (const cochran_log_t *log, const unsigned char *sample, unsigned int size, cochran_sample_callback_t callback, void *userdata);
 
-void cochran_sample_parse (cochran_family_t family, const cochran_log_t *log, const unsigned char *samples, unsigned int size, cochran_sample_callback_t callback, void *userdata);
+int cochran_sample_parse (const unsigned char *model, const cochran_log_t *log, const unsigned char *samples, unsigned int size, cochran_sample_callback_t callback, void *userdata);
 

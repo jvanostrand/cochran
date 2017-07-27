@@ -782,21 +782,49 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 	}
 }
 
-void cochran_sample_parse(cochran_family_t family, const cochran_log_t *log, const unsigned char *samples, unsigned int size, cochran_sample_callback_t callback, void *userdata) {
 
-	switch (family) {
-	case FAMILY_COMMANDER_I:
-		cochran_sample_parse_I(log, samples, size, callback, userdata);
-		break;
-	case FAMILY_COMMANDER_II:
-	case FAMILY_COMMANDER_III:
-		cochran_sample_parse_II(log, samples, size, callback, userdata);
-		break;
-	case FAMILY_GEMINI:
-		cochran_sample_parse_gem(log, samples, size, callback, userdata);
-		break;
-	case FAMILY_EMC:
-		cochran_sample_parse_emc(log, samples, size, callback, userdata);
-		break;
+cochran_sample_parser_t cochran_sample_get_parser(const unsigned char *model) {
+	
+	struct parser_table {
+		const char *model;
+		cochran_sample_parser_t parser;
+		const char *description;
+	};
+
+	struct parser_table parser[] = {
+		{ "017", cochran_sample_parse_I,	"Early Commander" },
+		{ "102", cochran_sample_parse_gem,	"Early Gemini" },
+		{ "120", cochran_sample_parse_I,	"Early Commander" },
+		{ "124", cochran_sample_parse_I,	"Nemo" },
+		{ "140", cochran_sample_parse_I,	"AquaNox" },
+		{ "213", cochran_sample_parse_II,	"Pre-21000 Commander" },
+		{ "215", cochran_sample_parse_gem,	"Gemini" },
+		{ "216", cochran_sample_parse_gem,	"Gemini" },
+		{ "221", cochran_sample_parse_II,	"Commander" },
+		{ "300", cochran_sample_parse_emc,	"EMC" },
+		{ "301", cochran_sample_parse_emc,	"EMC" },
+		{ "315", cochran_sample_parse_emc,	"EMC" },
+	};
+
+	int parser_cnt;
+	parser_cnt = sizeof(parser) / sizeof(struct parser_table);
+
+	for (int i = 0; i < parser_cnt; i++ )
+	if (!strncmp(model, parser[i].model, 3)) {
+		return parser[i].parser;
 	}
+
+	return NULL;
+}
+
+
+int cochran_sample_parse(const unsigned char *model, const cochran_log_t *log, const unsigned char *samples, unsigned int size, cochran_sample_callback_t callback, void *userdata) {
+
+	cochran_sample_parser_t parser = cochran_sample_get_parser(model);
+
+	if (!parser)
+		return 1;
+
+	parser(log, samples, size, callback, userdata);
+	return 0;
 }
