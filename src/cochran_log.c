@@ -251,43 +251,33 @@ void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
 }
 
 
-/*
- * cochran_log_type
- *
- * Determine the log parse function for the given model.
- */
-cochran_log_parser_t cochran_log_get_parser(const unsigned char *model) {
-
-	struct parser_table {
-		const char *model;
-		cochran_log_parser_t parser;
-		const char *description;
+int cochran_log_meta(cochran_log_meta_t *meta, const unsigned char *model) {
+	cochran_log_meta_t meta_table[] = {
+		{ "017", 90, cochran_log_commander_I_parse, 	"Early Commander" },
+		{ "102", 90, cochran_log_commander_I_parse,		"Early Gemini" },
+		{ "120", 90, cochran_log_commander_I_parse,		"Early Commander" },
+		{ "124", 90, cochran_log_commander_I_parse,		"Nemo" },
+		{ "140", 90, cochran_log_commander_I_parse,		"AquaNox" },
+		{ "213", 256, cochran_log_commander_II_parse,	"Pre-21000 Commander" },
+		{ "215", 256, cochran_log_commander_III_parse,	"Gemini" },
+		{ "216", 256, cochran_log_commander_III_parse,	"Gemini" },
+		{ "221", 256, cochran_log_commander_III_parse,	"Commander" },
+		{ "300", 512, cochran_log_emc_parse,			"EMC" },
+		{ "301", 512, cochran_log_emc_parse,			"EMC" },
+		{ "315", 512, cochran_log_emc_parse,			"EMC" },
 	};
 
-	struct parser_table parser[] = {
-		{ "017", cochran_log_commander_I_parse, 	"Early Commander" },
-		{ "102", cochran_log_commander_I_parse,		"Early Gemini" },
-		{ "120", cochran_log_commander_I_parse,		"Early Commander" },
-		{ "124", cochran_log_commander_I_parse,		"Nemo" },
-		{ "140", cochran_log_commander_I_parse,		"AquaNox" },
-		{ "213", cochran_log_commander_II_parse,	"Pre-21000 Commander" },
-		{ "215", cochran_log_commander_III_parse,	"Gemini" },
-		{ "216", cochran_log_commander_III_parse,	"Gemini" },
-		{ "221", cochran_log_commander_III_parse,	"Commander" },
-		{ "300", cochran_log_emc_parse,				"EMC" },
-		{ "301", cochran_log_emc_parse,				"EMC" },
-		{ "315", cochran_log_emc_parse,				"EMC" },
-	};
+	int meta_cnt;
+	meta_cnt = sizeof(meta_table) / sizeof(struct cochran_log_meta_t);
 
-	int parser_cnt;
-	parser_cnt = sizeof(parser) / sizeof(struct parser_table);
-
-	for (int i = 0; i < parser_cnt; i++ )
-		if (!strncmp(model, parser[i].model, 3)) {
-			return parser[i].parser;
+	for (int i = 0; i < meta_cnt; i++ ) {
+		if (!strncmp(model, meta_table[i].model, 3)) {
+			memcpy(meta, &(meta_table[i]), sizeof(cochran_log_meta_t));
+			return 0;
+		}
 	}
 
-	return NULL;
+	return 1;
 }
 
 
@@ -295,12 +285,12 @@ cochran_log_parser_t cochran_log_get_parser(const unsigned char *model) {
  * Determine parser to use and parse log
  */
 int cochran_log_parse(const unsigned char *model, const unsigned char *in, cochran_log_t *out) {
-	cochran_log_parser_t parser = cochran_log_get_parser(model);
+	cochran_log_meta_t meta;
 
-	if (!parser)
+	if (cochran_log_meta(&meta, model))
 		return 1;
 
-	parser(in, out);
+	meta.parser(in, out);
 
 	return 0;
 }

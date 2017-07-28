@@ -63,8 +63,15 @@ typedef struct cochran_log_t {
 	unsigned char tissue_end[40];
 } cochran_log_t;
 
-
 typedef void (*cochran_log_parser_t) (const unsigned char *in, cochran_log_t *out);
+
+typedef struct cochran_log_meta_t {
+	char model[4];
+	unsigned int log_size;
+	cochran_log_parser_t parser;
+	const char *description;
+} cochran_log_meta_t;
+
 
 void cochran_log_print_short_header(int ordinal);
 void cochran_log_print_short(cochran_log_t *log, int ordinal);
@@ -72,4 +79,4 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out);
 void cochran_log_commander_II_parse(const unsigned char *in, cochran_log_t *out);
 void cochran_log_commander_III_parse(const unsigned char *in, cochran_log_t *out);
 void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out);
-cochran_log_parser_t cochran_log_get_parser(const unsigned char *model);
+int cochran_log_meta(cochran_log_meta_t *meta, const unsigned char *model);
