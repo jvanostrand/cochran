@@ -3,7 +3,7 @@
 
 #include "cochran.h"
 #include "cochran_log.h"
-#include "cochran_sample_parse.h"
+#include "cochran_sample.h"
 
 typedef struct cochran_events_t {
 	unsigned char code;

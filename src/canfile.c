@@ -11,7 +11,7 @@
 #include "cochran.h"
 #include "cochran_can.h"
 #include "cochran_log.h"
-#include "cochran_sample_parse.h"
+#include "cochran_sample.h"
 
 
 // Print dive heading
