@@ -33,14 +33,16 @@ simcochran: simcochran.o
 cochran_download: cochran_download.o
 	gcc -g $(CFLAGS) $(LDFLAGS) -o ../bin/cochran_download cochran_download.o
 
-canfile.o: cochran.h cochran_log.h
+canfile.o: cochran.h cochran_log.h cochran_sample_parse.h cochran_can.h
 
 cochran_log.o: cochran.h cochran_log.h
 
 cochran_sample_parse.o: cochran.h cochran_log.h cochran_sample_parse.h
 
-canfile: canfile.o cochran_log.o cochran_sample_parse.o
-	gcc -Wall -Wextra -g $(CFLAGS) -lm -o ../bin/canfile canfile.o cochran_log.o cochran_sample_parse.o
+cochran_can.o: cochran.h cochran_log.h
+
+canfile: canfile.o cochran_log.o cochran_sample_parse.o cochran_can.o
+	gcc -Wall -Wextra -g $(CFLAGS) -lm -o ../bin/canfile canfile.o cochran_log.o cochran_sample_parse.o cochran_can.o
 
 wanfile.o: canfile_cmdr.h canfile_emc.h
 
