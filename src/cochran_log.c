@@ -194,6 +194,38 @@ void cochran_log_commander_III_parse(const unsigned char *in, cochran_log_t *out
 }
 
 
+void cochran_log_gem_parse(const unsigned char *in, cochran_log_t *out) {
+	memset(out, 0, sizeof(cochran_log_t));
+
+	out->timestamp_start		= array_uint32_le(in + 8);
+	localtime_r(&(out->timestamp_start), &(out->time_start));
+	out->depth_start			= in[14];
+	out->profile_begin			= array_uint32_le(in);
+	out->voltage_start			= array_uint16_le(in + 68) / 256.0;
+	out->dive_num				= array_uint16_le(in + 54);
+	out->rep_dive_num			= in[78];
+
+	memcpy(out->tissue_start, in + 80, 12);
+
+	out->profile_end			= array_uint32_le(in + 128);
+	out->bt						= array_uint16_le(in + 156);
+	out->depth_max				= array_uint16_le(in + 158) / 4.0;
+	out->deco_max				= array_uint16_le(in + 166);
+	out->tank_pressure_start	= array_uint16_le(in + 194);
+	for (int i = 0; i < 2; i++) {
+		out->mix[i].o2 			= array_uint16_le(in + 196 + i * 2) / 256.0;
+		out->mix[i].he 			= 0;
+	}
+
+	out->depth_avg				= in[205];	// uint16_le @ 51 maybe
+	out->temp_min				= in[208] / 2.0 + 20;
+	//out->temp_avg				= in[207] / 2.0 + 20;
+	out->temp_start				= in[209] / 2.0 + 20;
+	out->profile_interval		= in[213];
+	memcpy(out->tissue_end, in + 216, 12);
+}
+
+
 void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
 	memset(out, 0, sizeof(cochran_log_t));
 	out->time_start.tm_sec		= in[0];
@@ -254,7 +286,7 @@ void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
 int cochran_log_meta(cochran_log_meta_t *meta, const unsigned char *model) {
 	cochran_log_meta_t meta_table[] = {
 		{ "017", 90, cochran_log_commander_I_parse, 	"Early Commander" },
-		{ "102", 90, cochran_log_commander_I_parse,		"Early Gemini" },
+		{ "102", 256, cochran_log_gem_parse,			"Early Gemini" },
 		{ "120", 90, cochran_log_commander_I_parse,		"Early Commander" },
 		{ "124", 90, cochran_log_commander_I_parse,		"Nemo" },
 		{ "140", 90, cochran_log_commander_I_parse,		"AquaNox" },
