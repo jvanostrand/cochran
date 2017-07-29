@@ -1,0 +1,33 @@
+Overview
+========
+
+The "Cochran" project communicated with Cochran Undersea Technology scuba
+diving computers. Users who cannot or choose not to use Cochrans' Analyst
+software have no choice but this software to download and change settings
+on their dive computers. Analyst works only on Windows so Linux and Mac
+users have no native software available from Cochran.
+
+This project is currently in the experimental phase. I'm using it to 
+develop the algorithms to communicate with and parse data from Cochran
+dive computers. In the future this project will be able to change settings
+on the dive computer.
+
+Current State
+=============
+
+Function                       State
+------------------------------ -------------------------------------------
+Access to CAN and WAN files    Use the canfile program to decrypt extract,
+                               parse and display dive data. Currently it
+                               supports a wide range of files and current
+                               DCs.
+
+Download of data from DC       Use the "serial" program to download data
+                               from DCs. This results in a binary blob of
+                               log and profile data which can be parsed
+                               using cochran_log.c and _sample.c files.
+
+Changes to settings            This is the most dangerous function so it's
+                               taking time to develop.
+
+
