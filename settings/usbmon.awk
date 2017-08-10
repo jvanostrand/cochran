@@ -97,3 +97,9 @@ flag == 1 {
 	if ((bus == "" || bus == b) && (devid == "" || devid == d))
 		flag = 1;
 }
+
+# Modem control
+/.{33}40 / {
+	printf "\n";
+	print $0;
+}
