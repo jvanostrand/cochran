@@ -83,7 +83,8 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) 
 	out->rep_dive_num			= in[19];
 	out->dive_num				= array_uint16_le(in + 20);
 	out->sit					= array_uint16_le(in + 24);
-	out->voltage_start			= array_uint16_le(in + 30) / 256.0;
+	out->no_fly_start			= in[27] * 15;
+	out->voltage_start			= (in[32] >> 5) + (in[32] & 0x1f) / 32.0;
 
  	memcpy(out->tissue_end, in + 35, 12);
 
@@ -103,6 +104,10 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) 
 	out->deco_ceiling_max		= in[56] / 2.0;
 	out->deco_max				= array_uint16_le(in + 57);
 
+	out->ascent_rate_max		= in[59];
+	// out->ascent_rate_max_depth = in[60] * 2;
+	out->ascent_rate_max_bt		= array_uint16_le(in + 61);
+
 	out->profile_interval		= in[72];
 	out->conservatism			= in[73] / 2.55;
 
@@ -113,7 +118,9 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) 
 
 	out->temp_avg				= in[81];
 	out->temp_min				= in[82];
-	out->temp_start				= in[83];
+	out->temp_start				= in[83];// max
+	out->voltage_end			= (in[84] >> 5) + (in[84] & 0x1f) / 32.0;
+	out->no_fly_end				= in[85] * 15;
 
 	out->event_count			= in[89];
 }
