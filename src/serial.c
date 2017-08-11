@@ -71,7 +71,7 @@ typedef struct device_t {
 #define F_EMC          FAMILY_EMC,          9600, 806400,      0x05,         0,          0x10000
 
 device_t devices[] = {
-	// name            model               family                         log_address log_size
+	// name            model               family          log_address log_size
 	{ "Commander TM",  MODEL_COMMANDER_TM, F_COMMANDER_TM, 0x10000,    0x10000  },
 	{ "Commander I",   MODEL_COMMANDER_I,  F_COMMANDER,    0,          0x100000 },
 	{ "Commander II",  MODEL_COMMANDER_II, F_COMMANDER,    0,          0x100000 },
@@ -85,13 +85,13 @@ device_t devices[] = {
 int open_serial(const char *file) {
 	int fd;
 
-	dprintf(STDERR_FILENO, "Opening %s...\n", file);
+	dprintf(STDERR_FILENO, "Opening %s\n", file);
 
 	struct termios newtio;
-	fd = open("/dev/ttyUSB0", O_RDWR | O_NONBLOCK | O_NOCTTY);
+	fd = open(file, O_RDWR | O_NONBLOCK | O_NOCTTY);
 
 	if (fd == -1) {
-		dprintf(STDERR_FILENO, "UNable to open serial port\n");
+		dprintf(STDERR_FILENO, "Unable to open serial port\n");
 		return fd;
 	}
 
@@ -113,9 +113,9 @@ int open_serial(const char *file) {
 
 	newtio.c_iflag |= IGNPAR | IGNBRK;
 
-	newtio.c_oflag &= ~ONLCR;
+	newtio.c_oflag &= ~(ONLCR | OPOST);
 
-	//newtio.c_lflag = 0;
+	newtio.c_lflag &= ~(ISIG | ICANON | ECHO);
 
 	tcsetattr(fd, TCSANOW, &newtio);
 
@@ -298,7 +298,7 @@ void printhex(unsigned char *buf, int len)
 
 int wait_for_aa(int fd) {
 	int ret, count = 0;
-	unsigned char buf[4096];
+	unsigned char buf[1];
 
 	ioctl(fd, TIOCSBRK, NULL);
 	msleep(16);
@@ -317,6 +317,7 @@ int wait_for_aa(int fd) {
 	}
 	return 1;
 }
+
 int write_serial(int fd, const unsigned char *buf, unsigned int size, unsigned int hb) {
 
 	dprintf(STDERR_FILENO, "Sending %d byte command\n", size);
@@ -535,7 +536,7 @@ int read_misc(device_t *device, int fd, unsigned char *buf, unsigned int size) {
 
 	memcpy(cmd, "\x05\xE0\x03\x00\xDC\x05", cmd_size);
 
-	// Tell DC to refresh misc data
+	// Tell DC to refresh write current state data
 	write_serial(fd, "\x89", 1, 1);
 
 	return do_cmd(device, fd, cmd, cmd_size, buf, size);
@@ -545,6 +546,9 @@ int read_misc(device_t *device, int fd, unsigned char *buf, unsigned int size) {
 int read_ram(device_t *device, int fd, unsigned char *buf, unsigned int size) {
 	unsigned char cmd[6];
 	unsigned int cmd_size = 6;
+
+	// Tell DC to refresh write current state data
+	write_serial(fd, "\x89", 1, 1);
 
 	cmd[0] = 0x05;
 
