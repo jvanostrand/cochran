@@ -63,12 +63,14 @@ static void decode(const unsigned int start, const unsigned int end,
  *
  * CAN files have 0x40000 bytes of dive pointers.
  * WAN files have 0x30000 bytes of dive pointers.
+ * ANA files have 0x30000 bytes of dive pointers.
  */
 
-static int cochran_can_get_header_offset(cochran_file_type_t file_type) {
+static unsigned int cochran_can_get_header_offset(cochran_file_type_t file_type) {
 	unsigned int offset = 0;
 
 	switch (file_type) {
+	case FILE_ANA:
 	case FILE_WAN:
 		offset = 0x30000;
 		break;
@@ -86,11 +88,14 @@ static int cochran_can_get_header_offset(cochran_file_type_t file_type) {
  *
  * CAN files have 4 byte dive pointers.
  * WAN files can have 3 or 4 byte pointers.
+ * ANA files have 3 byte pointers.
  */
 
 static int cochran_can_get_address_size(cochran_file_type_t file_type, const unsigned char *ciphertext, unsigned int ciphertext_size) {
 	int address_size = 0;
-	
+
+	if (file_type == FILE_ANA) return 3;
+
 	switch (ciphertext[cochran_can_get_header_offset(file_type)]) {
 	case 0x43:
 	case 0x4f:
@@ -107,16 +112,52 @@ static int cochran_can_get_address_size(cochran_file_type_t file_type, const uns
 
 
 /*
- * cochran_can_meta
+ * cochran_can_ana_meta
  *
- * Parse header to obtain meta data about the can file.
+ * Determine information about the ANA file.
  */
 
-int cochran_can_meta(cochran_can_meta_t *meta, cochran_file_type_t file_type, const unsigned char *cleartext, unsigned int cleartext_size) { 
+static int cochran_can_ana_meta(cochran_can_meta_t * meta, const unsigned char *cleartext, unsigned int cleartext_size) {
+
+	meta->header_offset = cochran_can_get_header_offset(FILE_ANA);
+	meta->mod = cleartext[meta->header_offset] + 1;
+	meta->key = cleartext + meta->header_offset + 1;
+	meta->address_size = 3;
+	meta->address_count = 0x10000;
+
+	strncpy(meta->model, cleartext + meta->header_offset + meta->mod + 38, 3);
+
+	// Dive decode information
+	meta->decode_address[0] = 0;
+	meta->decode_address[1] = 0x4c3;
+	meta->decode_address[2] = 0x502;
+	meta->decode_address[3] = 0x540;
+	meta->decode_address[4] = -1;
+	meta->decode_key_offset[0] = -1; // don't decode first section;
+	for (int i = 1; i < 10; i++)
+		meta->decode_key_offset[i] = 0;
+	meta->decode_key_offset[2] = 0x3f; // strange key offset for 3rd section
+
+	meta->log_offset = 0x4d8;
+	meta->profile_offset = 0x540;
+
+	return 0;
+}
+
+
+/*
+ * cochran_can_can_meta
+ *
+ * Parse header to obtain meta data about the can or wan file.
+ */
+
+static int cochran_can_can_meta(cochran_can_meta_t *meta, cochran_file_type_t file_type, const unsigned char *cleartext, unsigned int cleartext_size) {
 
 	meta->header_offset = cochran_can_get_header_offset(file_type);
 	meta->address_size = cochran_can_get_address_size(file_type, cleartext, cleartext_size);
 
+	meta->mod = cleartext[meta->header_offset + 0x101] + 1;
+	meta->key = cleartext + meta->header_offset + 1;
 	const unsigned char *header = cleartext + meta->header_offset + 0x102;
 
 	strncpy(meta->model, header + 0x31, 3);
@@ -198,11 +239,24 @@ int cochran_can_meta(cochran_can_meta_t *meta, cochran_file_type_t file_type, co
 }
 
 
+int cochran_can_meta(cochran_can_meta_t *meta, cochran_file_type_t file_type, const unsigned char *cleartext, unsigned int cleartext_size) {
+
+	switch (file_type) {
+	case FILE_ANA:
+		return cochran_can_ana_meta(meta, cleartext, cleartext_size);
+		break;
+	case FILE_WAN:
+	case FILE_CAN:
+		return cochran_can_can_meta(meta, file_type, cleartext, cleartext_size);
+		break;
+	}
+
+	return 1;
+}
+
 
 static int cochran_can_decode_dive(cochran_can_meta_t *meta, const unsigned char *dive, unsigned int dive_size, unsigned int dive_num, int last_dive, void *userdata) {
 	unsigned char *cleartext = userdata;
-	const unsigned char *key = cleartext + meta->header_offset + 0x01;
-	const unsigned char mod = key[0x100] + 1;
 	const unsigned char *dives = (unsigned char *) cleartext;
 
 	const int dive_offset = ptr_uint(meta->address_size, dives, dive_num - 1);
@@ -217,13 +271,13 @@ static int cochran_can_decode_dive(cochran_can_meta_t *meta, const unsigned char
 			if (*koff == -1)
 				memcpy(cleartext + dive_offset, dive, end_addr - *addr);
 			else
-				decode(*addr, end_addr, key, *koff, mod, dive, dive_size, cleartext + dive_offset);
+				decode(*addr, end_addr, meta->key, *koff, meta->mod, dive, dive_size, cleartext + dive_offset);
 
 			addr++;
 			koff++;
 		}
 	} else {
-		decode(0, dive_size, key, 0, mod, dive, dive_size, cleartext + dive_offset);
+		decode(0, dive_size, meta->key, 0, meta->mod, dive, dive_size, cleartext + dive_offset);
 	}
 
 	return 0;
@@ -241,15 +295,27 @@ int cochran_can_foreach_dive(cochran_can_meta_t *meta, const unsigned char *clea
 
 	if (cleartext_size < meta->header_offset + 0x102)
 		return 1;
-	
+
 	int result = 0;
 	unsigned int dive_end = 0;
 	unsigned char *dive;
 	unsigned int dive_size = 0;
 	unsigned int i = 0;
-	while (ptr_uint(meta->address_size, dives, i) && i < meta->address_count - 2) {
-		dive_end = ptr_uint(meta->address_size, dives, i + 1);
 
+	while (ptr_uint(meta->address_size, dives, i) && i < meta->address_count - 2) {
+		if (ptr_uint(meta->address_size, dives, i) == 0xff0000) {
+			// Skip past bad dives
+			i++;
+			continue;
+		}
+
+		// Find next good dive
+		int n = i + 1;
+		while ((dive_end = ptr_uint(meta->address_size, dives, n)) == 0xff0000 && n < meta->address_count - 2)
+			n++;
+
+		if (n == meta->address_count - 2)
+			dive_end = cleartext_size;
 		// check out of range
 		if (dive_end < ptr_uint(meta->address_size, dives, i) || dive_end > cleartext_size)
 			break;
@@ -262,7 +328,6 @@ int cochran_can_foreach_dive(cochran_can_meta_t *meta, const unsigned char *clea
 		}
 
 		memcpy(dive, cleartext + ptr_uint(meta->address_size, dives, i), dive_size);
-
 		if (callback)
 			result = (callback)(meta, dive, dive_size, i + 1, 0, userdata);
 
@@ -286,7 +351,7 @@ int cochran_can_foreach_dive(cochran_can_meta_t *meta, const unsigned char *clea
 		memcpy(dive, cleartext + ptr_uint(meta->address_size, dives, i), dive_size);
 
 		if (callback)
-			result = (callback)(&meta, dive, dive_size, i+1, 1, userdata);
+			result = (callback)(meta, dive, dive_size, i+1, 1, userdata);
 
 		free(dive);
 
@@ -297,57 +362,90 @@ int cochran_can_foreach_dive(cochran_can_meta_t *meta, const unsigned char *clea
 }
 
 
-int cochran_can_decode_file(cochran_file_type_t file_type, const unsigned char *ciphertext, unsigned int ciphertext_size, unsigned char *cleartext) {
-	int offset = 0, address_size = 0; 
+/*
+ * ANA file structure
+ *
+ * 0x000000 - 0x02ffff       : Pointers into file for each dive.
+ * 0x030000 - 0x030000       : Key length (mod)
+ * 0x030001 - 0x030001 + mod : Key
+ * 0x030001 + 0x0308ee + mod : 0x0308ee + mod
+ * 0x0308ee + mod - ????     : Dive data
+ *
+ */
 
-	offset = cochran_can_get_header_offset(file_type);
-	address_size = cochran_can_get_address_size(file_type, ciphertext, ciphertext_size);
+int cochran_can_decode_ana_file(const unsigned char *ciphertext, unsigned int ciphertext_size, unsigned char *cleartext) {
+	unsigned int o = cochran_can_get_header_offset(FILE_ANA);
+	int address_size = 3;
+	const unsigned char *key = ciphertext + o + 1;
+	const unsigned char mod = ciphertext[o] + 1;
+	unsigned int hend = 0x308ef + mod;
 
+	// Copy the non-encrypted header (dive pointers, mod and key)
+	memcpy(cleartext, ciphertext, o + 1 + mod);
+
+	decode(o + 1 + mod, o + 1 + mod + 0x482, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 1 + mod + 0x482, o + hend, key, 0, mod, ciphertext, hend, cleartext);
+
+	cochran_can_meta_t meta;
+	if (cochran_can_meta(&meta, FILE_ANA, ciphertext, ciphertext_size))
+		return 1;
+
+	int rc;
+	if ((rc = cochran_can_foreach_dive(&meta, ciphertext, ciphertext_size, cochran_can_decode_dive, (void *) cleartext))) {
+		fprintf(stderr, "Error %d decoding dives.\n", rc);
+		return rc;
+	}
+
+	// Erase the key, since we are decoded
+	for (unsigned int x = o + 0x01 ; x < o + mod; x++)
+		cleartext[x] = 0;
+
+	return 0;
+}
+
+
+int cochran_can_decode_wan_file(const unsigned char *ciphertext, unsigned int ciphertext_size, unsigned char *cleartext) {
+	unsigned int offset = cochran_can_get_header_offset(FILE_WAN);
 	const unsigned char *key = ciphertext + offset + 0x01;
 	const unsigned char mod = key[0x100] + 1;
-    
-	// The base offset we'll use for accessing the header
-	unsigned int o = offset + 0x102;
+
+	int address_size = 0;
+	address_size = cochran_can_get_address_size(FILE_WAN, ciphertext, ciphertext_size);
+
+	// Analyst v3 records a 0xff0000 pointer for dives that weren't
+	// downloaded from the DC.
+	unsigned int i = 0;
+	while (ptr_uint(address_size, ciphertext, i) == 0xff0000) i++;
 
 	// Header size
-	unsigned int hend = ptr_uint(address_size, ciphertext, 0);
+	unsigned int hend = 0;
+	hend = ptr_uint(address_size, ciphertext, i);
+
+	// The base offset we'll use for accessing the header
+	unsigned int o = offset + 0x102;
 
 	// Copy the non-encrypted header (dive pointers, key, and mod)
 	memcpy(cleartext, ciphertext, o);
 
-	/* Decrypt the header information
-	*  It was a weird cipher pattern that may tell us the boundaries of
-	*  structures.
-	*/
 	/*
-	* header size is the space between 0x40102 (0x30102 for WAN) and the first dive.
-	* CAN					WAN
-	* 0x0000 - 0x000c		0x0000 - 0x000c
-	* 0x000c - 0x0a12		0x000c - 0x048e
-	* 0x0a12 - 0x1a12		0x048e - end
-	* 0x1a12 - 0x2a12
-	* 0x2a12 - 0x3a12
-	* 0x3a12 - 0x5312
-	* 0x5312 - end		
+ 	* Decrypt the header information
+	* It was a weird cipher pattern that may tell us the boundaries of
+	* structures.
+	*
+	* header size is the space between 0x30102 and the first dive.
+	*
+	* Encrypted blocks
+	* 0x0000 - 0x000c
+	* 0x000c - 0x048e
+	* 0x048e - end
 	*/
 
-	if (file_type == FILE_WAN) {
-		decode(o + 0x0000, o + 0x000c, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x000c, o + 0x048e, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x048e, hend,       key, 0, mod, ciphertext, hend, cleartext);
-	} else {
-		decode(o + 0x0000, o + 0x000c, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x000c, o + 0x0a12, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x0a12, o + 0x1a12, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x1a12, o + 0x2a12, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x2a12, o + 0x3a12, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x3a12, o + 0x5312, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x5312, o + 0x5d00, key, 0, mod, ciphertext, hend, cleartext);
-		decode(o + 0x5d00, hend,       key, 0, mod, ciphertext, hend, cleartext);
-	}
+	decode(o + 0x0000, o + 0x000c, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x000c, o + 0x048e, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x048e, hend,       key, 0, mod, ciphertext, hend, cleartext);
 
 	cochran_can_meta_t meta;
-	if (cochran_can_meta(&meta, file_type, cleartext, ciphertext_size))
+	if (cochran_can_meta(&meta, FILE_WAN, cleartext, ciphertext_size))
 		return 1;
 
 	int rc;
@@ -361,4 +459,88 @@ int cochran_can_decode_file(cochran_file_type_t file_type, const unsigned char *
 		cleartext[x] = 0;
 
 	return 0;
+}
+
+
+int cochran_can_decode_can_file(const unsigned char *ciphertext, unsigned int ciphertext_size, unsigned char *cleartext) {
+	unsigned int offset = cochran_can_get_header_offset(FILE_CAN);
+	const unsigned char *key = ciphertext + offset + 0x01;
+	const unsigned char mod = key[0x100] + 1;
+
+	int address_size = 0;
+	address_size = cochran_can_get_address_size(FILE_CAN, ciphertext, ciphertext_size);
+
+	unsigned int i = 0;
+	while (ptr_uint(address_size, ciphertext, i) == 0xff0000) i++;
+
+	// Header size
+	unsigned int hend = 0;
+	hend = ptr_uint(address_size, ciphertext, i);
+
+	// The base offset we'll use for accessing the header
+	unsigned int o = offset + 0x102;
+
+	// Copy the non-encrypted header (dive pointers, key, and mod)
+	memcpy(cleartext, ciphertext, o);
+
+	/*
+	* Decrypt the header information
+	* It was a weird cipher pattern that may tell us the boundaries of
+	* structures.
+	*
+	* header size is the space between 0x40102 and the first dive.
+	*
+	* Encrypted blocks
+	* 0x0000 - 0x000c
+	* 0x000c - 0x0a12
+	* 0x0a12 - 0x1a12
+	* 0x1a12 - 0x2a12
+	* 0x2a12 - 0x3a12
+	* 0x3a12 - 0x5312
+	* 0x5312 - end
+	*/
+
+	decode(o + 0x0000, o + 0x000c, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x000c, o + 0x0a12, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x0a12, o + 0x1a12, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x1a12, o + 0x2a12, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x2a12, o + 0x3a12, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x3a12, o + 0x5312, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x5312, o + 0x5d00, key, 0, mod, ciphertext, hend, cleartext);
+	decode(o + 0x5d00, hend,       key, 0, mod, ciphertext, hend, cleartext);
+
+	cochran_can_meta_t meta;
+	if (cochran_can_meta(&meta, FILE_CAN, cleartext, ciphertext_size))
+		return 1;
+
+	int rc;
+	if ((rc = cochran_can_foreach_dive(&meta, ciphertext, ciphertext_size, cochran_can_decode_dive, (void *) cleartext))) {
+		fprintf(stderr, "Error %d decoding dives.\n", rc);
+		return rc;
+	}
+
+	// Erase the key, since we are decoded
+	for (unsigned int x = offset + 0x01 ; x < offset + 0x101; x++)
+		cleartext[x] = 0;
+
+	return 0;
+}
+
+
+int cochran_can_decode_file(cochran_file_type_t file_type, const unsigned char *ciphertext, unsigned int ciphertext_size, unsigned char *cleartext) {
+
+
+	switch (file_type) {
+	case FILE_ANA:
+		return cochran_can_decode_ana_file(ciphertext, ciphertext_size, cleartext);
+		break;
+	case FILE_WAN:
+		return cochran_can_decode_wan_file(ciphertext, ciphertext_size, cleartext);
+		break;
+	case FILE_CAN:
+		return cochran_can_decode_can_file(ciphertext, ciphertext_size, cleartext);
+		break;
+	}
+
+	return 1;
 }

@@ -302,8 +302,10 @@ int main(int argc, char *argv[]) {
 		file_type = FILE_WAN;
 	} else if (!strcasecmp(fileext, ".can")) {
 		file_type = FILE_CAN;
+	} else if (!strcasecmp(fileext, ".ana")) {
+		file_type = FILE_ANA;
 	} else {
-		fputs("Unknown file type. File must end in .WAN or .CAN\n", stderr);
+		fputs("Unknown file type. File must end in .ANA, .WAN or .CAN\n", stderr);
 		exit(1);
 	}
 
@@ -324,7 +326,7 @@ int main(int argc, char *argv[]) {
 			putchar(clearfile[x]);
 		}
 		break;
-	case 1:		// Summar and profile only
+	case 1:		// Summary and profile only
 		cochran_can_foreach_dive(&meta, clearfile, clearfile_size, print_dive_samples_cb, 0);
 		break;
 	case 2: 	// Summary only

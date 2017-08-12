@@ -1,5 +1,6 @@
 
 typedef enum cochran_file_type_t {
+	FILE_ANA,
 	FILE_WAN,
 	FILE_CAN,
 } cochran_file_type_t;
@@ -8,6 +9,8 @@ typedef struct cochran_can_meta_t {
     cochran_file_type_t file_type;
 	unsigned char file_format;
     char model[4];
+	unsigned char mod;
+	unsigned const char *key;
 	unsigned int header_offset;
 	unsigned int address_size;
 	unsigned int address_count;
