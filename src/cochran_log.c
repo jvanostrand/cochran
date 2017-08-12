@@ -290,7 +290,7 @@ void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out) {
 }
 
 
-int cochran_log_meta(cochran_log_meta_t *meta, const unsigned char *model) {
+int cochran_log_meta(cochran_log_meta_t *meta, const char *model) {
 	cochran_log_meta_t meta_table[] = {
 		{ "017", 90, cochran_log_commander_I_parse, 	"Early Commander" },
 		{ "102", 256, cochran_log_gem_parse,			"Early Gemini" },
@@ -323,7 +323,7 @@ int cochran_log_meta(cochran_log_meta_t *meta, const unsigned char *model) {
 /*
  * Determine parser to use and parse log
  */
-int cochran_log_parse(const unsigned char *model, const unsigned char *in, cochran_log_t *out) {
+int cochran_log_parse(const char *model, const unsigned char *in, cochran_log_t *out) {
 	cochran_log_meta_t meta;
 
 	if (cochran_log_meta(&meta, model))
