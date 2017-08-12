@@ -79,6 +79,6 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out);
 void cochran_log_commander_II_parse(const unsigned char *in, cochran_log_t *out);
 void cochran_log_commander_III_parse(const unsigned char *in, cochran_log_t *out);
 void cochran_log_emc_parse(const unsigned char *in, cochran_log_t *out);
-int cochran_log_meta(cochran_log_meta_t *meta, const unsigned char *model);
-int cochran_log_parse(const unsigned char *model, const unsigned char *in, cochran_log_t *out);
+int cochran_log_meta(cochran_log_meta_t *meta, const char *model);
+int cochran_log_parse(const char *model, const unsigned char *in, cochran_log_t *out);
 
