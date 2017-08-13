@@ -26,6 +26,7 @@ typedef struct cochran_log_t {
 	unsigned int temp_min_bt;
 
 	unsigned int tank_pressure_start;	// PSI
+	unsigned int tank_pressure_end;		// PSI
 	unsigned int gas_consumption_start;	// PSI/minute
 	unsigned int ascent_rate_max;		// feet/minute
 	unsigned int ascent_rate_max_bt;	// seconds

@@ -69,6 +69,51 @@ void cochran_log_print_short(cochran_log_t *log, int ordinal) {
 }
 
 
+void cochran_log_nemesis_parse(const unsigned char *in, cochran_log_t *out) {
+	memset(out, 0, sizeof(cochran_log_t));
+
+	out->profile_begin			= array_uint24_le(in);
+
+	memcpy(out->tissue_start, in + 3, 12);
+
+	// I only had one file to determine this epoch and a version of
+	// Analyst that didn't display seconds. It seems that the epoch
+	// is approx Jan 1, 1892 00:00:00 "Dec 31, 1891 23:42:28"
+	// which is almost 100 years from the later models' epoch of
+	// Jan 1, 1992 00:00:00.
+	out->timestamp_start		= array_uint32_le(in + 15) - 2461431600;
+	localtime_r(&out->timestamp_start, &out->time_start);
+
+	out->rep_dive_num			= in[19];
+	out->dive_num				= array_uint16_le(in + 20);
+
+	out->tank_pressure_start	= array_uint16_le(in + 26);
+	out->voltage_start			= (in[39] >> 5) + (in[39] & 0x1f) / 32.0;
+	out->bt						= array_uint16_le(in + 54);
+	out->depth_max				= array_uint16_le(in + 56) / 4.0;
+	out->depth_avg				= array_uint16_le(in + 51) / 4.0;
+	out->tank_pressure_end		= array_uint16_le(in + 60);
+	out->ndl_min				= array_uint16_le(in + 64);
+	out->deco_max				= in[68];
+
+	out->ascent_rate_max		= in[67];
+	// out->ascent_rate_max_depth = in[68] * 2;
+	out->ascent_rate_max_bt		= array_uint16_le(in + 69);
+
+	out->profile_interval		= in[84]; //???
+	out->conservatism			= in[85] / 2.55; //???
+	out->mix[0].o2 				= array_uint16_le(in + 86) / 256;
+	out->mix[1].o2 				= array_uint16_le(in + 88) / 256;
+
+	out->voltage_end			= (in[92] >> 5) + (in[92] & 0x1f) / 32.0;
+	out->no_fly_end				= (in[93] >> 5) + (in[93] & 0x1f) / 32.0;
+	out->temp_avg				= in[95];
+	out->temp_min				= in[96];
+	out->temp_start				= in[97];// max
+
+	out->event_count			= in[102];
+}
+
 // Early commander parser
 void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) {
 	memset(out, 0, sizeof(cochran_log_t));
@@ -118,6 +163,7 @@ void cochran_log_commander_I_parse(const unsigned char *in, cochran_log_t *out) 
 
 	out->temp_avg				= in[81];
 	out->temp_min				= in[82];
+
 	out->temp_start				= in[83];// max
 	out->voltage_end			= (in[84] >> 5) + (in[84] & 0x1f) / 32.0;
 	out->no_fly_end				= in[85] * 15;
@@ -294,6 +340,7 @@ int cochran_log_meta(cochran_log_meta_t *meta, const char *model) {
 	cochran_log_meta_t meta_table[] = {
 		{ "017", 90, cochran_log_commander_I_parse, 	"Early Commander" },
 		{ "102", 256, cochran_log_gem_parse,			"Early Gemini" },
+		{ "114", 108, cochran_log_nemesis_parse,		"Nemesis" },
 		{ "120", 90, cochran_log_commander_I_parse,		"Early Commander" },
 		{ "124", 90, cochran_log_commander_I_parse,		"Nemo" },
 		{ "140", 90, cochran_log_commander_I_parse,		"AquaNox" },

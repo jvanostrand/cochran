@@ -91,6 +91,147 @@ static int cochran_sample_parse_inter_dive (cochran_family_t family, unsigned ch
 	return(0);
 }
 
+/*
+ * cochran_sample_parse_nemesis
+ *
+ * I think this was one of the first cochrans which sampled tank pressure.
+ * The sample has a two byte header:
+ *     sample[0] is start temperature in half degress F
+ *     sample[1] is start depth in half feet
+ * Samples thereafter consist of two bytes
+ *     - depth sample is a byte where bit 0x80 is 0. Bit 0x40 indicates a
+ *     negative value, bites 0x3f indicate change of depth in half feet.
+ *     - tank sample is the next byte. Bit 0x80, if set, indicates a
+ *     negative value, bits 0x7f indicate tank pressure change in 2 psi
+ *     increments.
+ * If the depth sample byte has bit 0x80 set and bits 0x60 clear then it's
+ * a temperature change byte. Bit 0x10 if set indicates a negative
+ * temperature change, bits 0xf indicate temperature change in half degress
+ * F.
+ * If the depth sample byte has but 0x80 set and one or both of bits 0x60
+ * set then the byte is an event byte.
+ */
+
+void cochran_sample_parse_nemesis (const cochran_log_t *log, const unsigned char *samples, unsigned int size, cochran_sample_callback_t callback, void *userdata) {
+	unsigned int sample_size = 2;
+	unsigned int offset = 0;
+	unsigned int sample_cnt = 0;
+	cochran_sample_t sample = {0};
+
+	double temp = samples[0] / 2.0;
+	double depth = samples[1] / 2.0;
+	unsigned int tank_pressure = log->tank_pressure_start;
+	unsigned int deco_ceiling = 0;
+	unsigned int deco_time = 0;
+
+	// Issue initial depth/temp/tank pressure samples
+	if (callback) {
+		sample.type = SAMPLE_TEMP;
+		sample.value.temp = temp;
+		sample.raw.data = samples;
+		sample.raw.size = 1;
+		callback(0, &sample, userdata);
+
+		sample.type = SAMPLE_DEPTH;
+		sample.value.depth = depth;
+		sample.raw.data = samples + 1;
+		sample.raw.size = 1;
+		callback(0, &sample, userdata);
+
+		sample.type = SAMPLE_TANK_PRESSURE;
+		sample.value.tank_pressure = tank_pressure;
+		sample.raw.size = 0;
+		callback(0, &sample, userdata);
+	}
+
+	offset = 2;
+
+	while (offset < size) {
+		const unsigned char *s = samples + offset;
+
+		// Check for special sample (event or a temp change for early Commanders
+		if (s[0] & 0x80 && s[0] & 0x60) {
+			// Event code
+
+			// Locate event info
+			int e = 0;
+			while (cochran_events[e].code && cochran_events[e].code != *s) e++;
+
+			// Issue event sample
+			sample.type = SAMPLE_EVENT;
+			sample.value.event = cochran_events[e].description;
+			sample.raw.data = s;
+			sample.raw.size = 1;
+			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+			switch (*s) {
+			case 0xAB:		// Lower deco ceiling (deeper)
+				deco_ceiling += 10;
+				break;
+			case 0xAD:		// Raise deco ceiling (shallower)
+				deco_ceiling -= 10;
+				break;
+			case 0xC5:
+				deco_time = 1;
+				break;
+			case 0xC8:
+				deco_time = 0;
+				break;
+			default:
+				// Just an event, we're done here.
+				offset++;
+				continue;
+			}
+
+			// Issue deco sample
+			sample.type = SAMPLE_DECO;
+			sample.value.deco.time = deco_time; // Minutes
+			sample.value.deco.ceiling = deco_ceiling; // feet
+			sample.raw.data = 0;
+			sample.raw.size = 0;
+			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+			offset++;
+			continue;
+		} else if (s[0] & 0x80) {
+			// Temp
+			if (*s & 0x10)
+				temp -= (*s & 0x0f) / 2.0;
+			else
+				temp += (*s & 0x0f) / 2.0;
+			sample.type = SAMPLE_TEMP;
+			sample.value.temp = temp;
+			sample.raw.data = s;
+			sample.raw.size = 1;
+			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+			offset++;
+		} else {
+			// Depth
+			if (*s & 0x40)
+				depth -= (*s & 0x3f) / 2.0;
+			else
+				depth += (*s & 0x3f) / 2.0;
+			sample_cnt++;
+			sample.type = SAMPLE_DEPTH;
+			sample.value.temp = depth;
+			sample.raw.data = s;
+			sample.raw.size = 1;
+			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+
+			// Tank pressure
+			if (s[1] & 0x80)
+				tank_pressure -= (s[1] & 0x0f);
+			else
+				tank_pressure += (s[1] & 0x0f);
+
+			sample.type = SAMPLE_TANK_PRESSURE;
+			sample.value.tank_pressure = tank_pressure;
+			sample.raw.data = s + 1;
+			sample.raw.size = 1;
+			if (callback) callback(sample_cnt * log->profile_interval, &sample, userdata);
+			offset += sample_size;
+		}
+	}
+}
 
 
 /*
@@ -105,7 +246,7 @@ static int cochran_sample_parse_inter_dive (cochran_family_t family, unsigned ch
  * A depth sample indicates the start of a new profile interval, i.e.
  * sample_cnt x profile_interval = time in seconds.
  * A temperature sample is a byte with 0x80 set and *none* of bits 0x60 set. Bit
- * 0x10 indicates a negative value. Bits 0x3f represent the change in temperature
+ * 0x10 indicates a negative value. Bits 0x0f represent the change in temperature
  * in half degrees F.
  * An event byte (e.g. an alarm or deco change) is identified by bit 0x80 set and
  * one or more of bits 0x60 set.
@@ -801,7 +942,7 @@ void cochran_sample_parse_emc(const cochran_log_t *log, const unsigned char *sam
 
 
 cochran_sample_parser_t cochran_sample_get_parser(const unsigned char *model) {
-	
+
 	struct parser_table {
 		const char *model;
 		cochran_sample_parser_t parser;
@@ -811,6 +952,7 @@ cochran_sample_parser_t cochran_sample_get_parser(const unsigned char *model) {
 	struct parser_table parser[] = {
 		{ "017", cochran_sample_parse_I,	"Early Commander" },
 		{ "102", cochran_sample_parse_gem,	"Early Gemini" },
+		{ "114", cochran_sample_parse_nemesis,	"Nemesis" },
 		{ "120", cochran_sample_parse_I,	"Early Commander" },
 		{ "124", cochran_sample_parse_I,	"Nemo" },
 		{ "140", cochran_sample_parse_I,	"AquaNox" },
